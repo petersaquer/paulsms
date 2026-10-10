@@ -577,8 +577,11 @@ fun ChatDetailScreen(
     if (showAttachmentSheet) {
         AttachmentSheet(
             onDismiss = { showAttachmentSheet = false },
+            onSelectCamera = {
+                onSendMessage("📸 [Foto capturada con la cámara]", false)
+            },
             onSelectGallery = {
-                onSendMessage("📷 [Foto compartida desde la galería]", false)
+                onSendMessage("📷 [Foto seleccionada de la galería]", false)
             },
             onSelectGif = {
                 showGifPickerSheet = true
@@ -590,7 +593,13 @@ fun ChatDetailScreen(
                 showCreatePollDialog = true
             },
             onSelectFile = {
-                onSendMessage("📄 Documento_Paul_Spec.pdf (1.8 MB)", false)
+                onSendMessage("📄 [Archivo / Documento adjunto]", false)
+            },
+            onSelectContact = {
+                onSendMessage("👤 [Tarjeta de contacto compartida]", false)
+            },
+            onSelectAudio = {
+                onSendMessage("🎵 [Archivo de audio compartido]", false)
             }
         )
     }

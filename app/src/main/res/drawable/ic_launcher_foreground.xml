@@ -1,20 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group
-        android:scaleX="3.3"
-        android:scaleY="3.3"
-        android:translateX="14.4"
-        android:translateY="14.4">
-        <!-- Main body of paper plane -->
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M2.2,10.6 L21.6,3.2 C22.4,2.9 23.3,3.5 23.1,4.4 L19.8,20.2 C19.6,21.1 18.5,21.5 17.8,21.0 L12.2,16.8 L8.9,19.9 C8.6,20.2 8.1,20.0 8.1,19.6 L8.1,15.2 L18.6,7.2 C19.0,6.8 18.5,6.2 18.0,6.5 L6.2,13.9 L2.2,10.6 Z" />
-        <!-- Inner fold shadow flap for depth -->
-        <path
-            android:fillColor="#E1F5FE"
-            android:pathData="M12.2,16.8 L8.1,15.2 L8.1,19.6 L10.5,17.4 Z" />
-    </group>
+
+    <!-- Glowing subtle backdrop circle -->
+    <path
+        android:fillColor="#15FFFFFF"
+        android:pathData="M54,16 A38,38 0 1,0 54,92 A38,38 0 1,0 54,16 Z" />
+
+    <!-- Stem of P -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M34,31 C34,29.3 35.3,28 37,28 L46,28 C47.7,28 49,29.3 49,31 L49,77 C49,78.7 47.7,80 46,80 L37,80 C35.3,80 34,78.7 34,77 Z" />
+
+    <!-- Outer Loop of P -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M44,28 L59,28 C67.8,28 75,34.7 75,43 C75,51.3 67.8,58 59,58 L44,58 Z" />
+
+    <!-- Inner Hole of P (transparent cut) -->
+    <path
+        android:fillColor="#FF1976D2"
+        android:pathData="M49,36 L58,36 C62.4,36 66,39.1 66,43 C66,46.9 62.4,50 58,50 L49,50 Z" />
+
+    <!-- Little Bird: Wings soaring upwards from top of P -->
+    <path
+        android:fillColor="#FFE0F7FA"
+        android:pathData="M66,28 C68,20 73,13 81,10 C79,16 75,22 71,27 Z" />
+
+    <path
+        android:fillColor="#FF80D8FF"
+        android:pathData="M69,27 C74,18 82,14 89,12 C86,18 81,24 76,28 Z" />
+
+    <!-- Bird Body, Head, Beak, and Tail perched on P -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M60,33 C58,29 61,24 66,23 C70,22 74,21 77,18 C79,16 82,15 84,14 L82,18 C85,17 87,18 88,19 L83,21 C87,22 88,24 87,25 C84,30 78,33 72,33 C67,33 63,35 60,33 Z" />
+
+    <!-- Bird Eye -->
+    <path
+        android:fillColor="#FF0D47A1"
+        android:pathData="M78,19 A1.5,1.5 0 1,0 78,16 A1.5,1.5 0 1,0 78,19 Z" />
+
+    <!-- Sparkling communication trail/chirp -->
+    <path
+        android:fillColor="#FFB3E5FC"
+        android:pathData="M87,14 L89,12 L87,10 L89,12 Z"
+        android:strokeColor="#FFB3E5FC"
+        android:strokeWidth="1.5" />
+
 </vector>

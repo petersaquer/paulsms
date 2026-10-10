@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Poll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -39,11 +42,14 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun AttachmentSheet(
     onDismiss: () -> Unit,
+    onSelectCamera: () -> Unit = {},
     onSelectGallery: () -> Unit,
     onSelectGif: () -> Unit,
     onSelectLocation: () -> Unit,
     onSelectPoll: () -> Unit,
-    onSelectFile: () -> Unit
+    onSelectFile: () -> Unit,
+    onSelectContact: () -> Unit = {},
+    onSelectAudio: () -> Unit = {}
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -53,23 +59,37 @@ fun AttachmentSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
             Text(
                 text = "Compartir en el chat",
                 style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 18.dp)
             )
 
+            // Row 1: Camera, Gallery, File, Location
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                AttachmentItem(
+                    title = "Cámara",
+                    icon = Icons.Default.PhotoCamera,
+                    color = Color(0xFFE91E63),
+                    testTag = "attach_camera",
+                    onClick = {
+                        onDismiss()
+                        onSelectCamera()
+                    }
+                )
+
                 AttachmentItem(
                     title = "Galería",
                     icon = Icons.Default.Image,
                     color = Color(0xFF29B6F6),
+                    testTag = "attach_gallery",
                     onClick = {
                         onDismiss()
                         onSelectGallery()
@@ -77,12 +97,13 @@ fun AttachmentSheet(
                 )
 
                 AttachmentItem(
-                    title = "GIFs",
-                    icon = Icons.Default.Gif,
-                    color = Color(0xFFAB47BC),
+                    title = "Archivo",
+                    icon = Icons.Default.Description,
+                    color = Color(0xFF5C6BC0),
+                    testTag = "attach_file",
                     onClick = {
                         onDismiss()
-                        onSelectGif()
+                        onSelectFile()
                     }
                 )
 
@@ -90,16 +111,26 @@ fun AttachmentSheet(
                     title = "Ubicación",
                     icon = Icons.Default.LocationOn,
                     color = Color(0xFF43A047),
+                    testTag = "attach_location",
                     onClick = {
                         onDismiss()
                         onSelectLocation()
                     }
                 )
+            }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Row 2: Poll, Contact, Audio, GIF
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 AttachmentItem(
                     title = "Encuesta",
                     icon = Icons.Default.Poll,
                     color = Color(0xFFFFB300),
+                    testTag = "attach_poll",
                     onClick = {
                         onDismiss()
                         onSelectPoll()
@@ -107,17 +138,40 @@ fun AttachmentSheet(
                 )
 
                 AttachmentItem(
-                    title = "Archivo",
-                    icon = Icons.Default.Description,
-                    color = Color(0xFF5C6BC0),
+                    title = "Contacto",
+                    icon = Icons.Default.Person,
+                    color = Color(0xFF00ACC1),
+                    testTag = "attach_contact",
                     onClick = {
                         onDismiss()
-                        onSelectFile()
+                        onSelectContact()
+                    }
+                )
+
+                AttachmentItem(
+                    title = "Música",
+                    icon = Icons.Default.Headphones,
+                    color = Color(0xFFFF7043),
+                    testTag = "attach_audio",
+                    onClick = {
+                        onDismiss()
+                        onSelectAudio()
+                    }
+                )
+
+                AttachmentItem(
+                    title = "GIFs",
+                    icon = Icons.Default.Gif,
+                    color = Color(0xFFAB47BC),
+                    testTag = "attach_gif",
+                    onClick = {
+                        onDismiss()
+                        onSelectGif()
                     }
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
         }
     }
 }
@@ -127,6 +181,7 @@ private fun AttachmentItem(
     title: String,
     icon: ImageVector,
     color: Color,
+    testTag: String,
     onClick: () -> Unit
 ) {
     Column(
@@ -134,11 +189,12 @@ private fun AttachmentItem(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(6.dp)
+            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .testTag(testTag)
     ) {
         Box(
             modifier = Modifier
-                .size(52.dp)
+                .size(54.dp)
                 .clip(CircleShape)
                 .background(color),
             contentAlignment = Alignment.Center
@@ -155,7 +211,8 @@ private fun AttachmentItem(
             text = title,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 11.sp
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
         )
     }
 }

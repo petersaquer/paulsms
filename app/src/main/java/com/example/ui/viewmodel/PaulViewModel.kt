@@ -2,8 +2,10 @@ package com.example.ui.viewmodel
 
 import android.app.Activity
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.model.AppUpdateInfo
 import com.example.data.model.Chat
 import com.example.data.model.ChatType
 import com.example.data.model.DeviceContact
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -81,6 +84,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     val recordingSeconds: StateFlow<Int> = _recordingSeconds.asStateFlow()
 
     private var recordingTimerJob: Job? = null
+    private var messagesListenerJob: Job? = null
 
     // Privacy and Security settings
     private val _privacyPhone = MutableStateFlow("Mis contactos")
@@ -103,10 +107,20 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     // Real list of all users for the Admin Panel
     val allUsers: StateFlow<List<User>> = repository.observeAllUsers()
+        .catch { emit(emptyList()) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000L),
             initialValue = emptyList()
+        )
+
+    // Real-time In-App Updates
+    val latestAppUpdate: StateFlow<AppUpdateInfo?> = repository.observeLatestAppUpdate()
+        .catch { emit(null) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = null
         )
 
     private val _registeredCount = MutableStateFlow(0)
@@ -114,22 +128,30 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
-            _registeredCount.value = repository.getRegisteredUsersCount()
-            _isFirebaseSignedIn.value = repository.isUserSignedIn()
-            if (repository.isUserSignedIn()) {
-                val user = repository.currentUser
-                _currentUser.value = user
-                if (user != null && _chats.value.isEmpty()) {
-                    _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+            try {
+                _registeredCount.value = repository.getRegisteredUsersCount()
+                _isFirebaseSignedIn.value = repository.isUserSignedIn()
+                if (repository.isUserSignedIn()) {
+                    val user = repository.currentUser
+                    _currentUser.value = user
+                    if (user != null && _chats.value.isEmpty()) {
+                        _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w("PaulViewModel", "Safe init exception: ${e.message}")
             }
         }
     }
 
     suspend fun getRegisteredUsersCount(): Int {
-        val count = repository.getRegisteredUsersCount()
-        _registeredCount.value = count
-        return count
+        return try {
+            val count = repository.getRegisteredUsersCount()
+            _registeredCount.value = count
+            count
+        } catch (e: Exception) {
+            0
+        }
     }
 
     /**
@@ -197,6 +219,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signOut(onComplete: () -> Unit) {
+        messagesListenerJob?.cancel()
         repository.signOut(viewModelScope) {
             _isFirebaseSignedIn.value = false
             _currentUser.value = null
@@ -241,6 +264,22 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }.onFailure {
                 onError(it.localizedMessage ?: "Error al eliminar usuario")
             }
+        }
+    }
+
+    // Admin Publish In-App Update
+    fun publishAppUpdate(
+        versionName: String,
+        versionCode: Int,
+        apkUrl: String,
+        changelog: String,
+        isMandatory: Boolean,
+        onComplete: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = repository.publishAppUpdate(versionName, versionCode, apkUrl, changelog, isMandatory)
+            res.onSuccess { onComplete() }.onFailure { onError(it.localizedMessage ?: "Error al publicar actualización") }
         }
     }
 
@@ -300,9 +339,27 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     fun selectChat(chat: Chat?) {
         _selectedChat.value = chat
         _replyingMessage.value = null
-        if (chat != null && chat.unreadCount > 0) {
-            _chats.update { list ->
-                list.map { if (it.id == chat.id) it.copy(unreadCount = 0) else it }
+        messagesListenerJob?.cancel()
+
+        if (chat != null) {
+            if (chat.unreadCount > 0) {
+                _chats.update { list ->
+                    list.map { if (it.id == chat.id) it.copy(unreadCount = 0) else it }
+                }
+            }
+
+            // Real-time Messages Observation for this chat!
+            messagesListenerJob = viewModelScope.launch {
+                repository.observeRealtimeMessages(chat.id).collect { cloudMsgs ->
+                    if (cloudMsgs.isNotEmpty()) {
+                        _messages.update { currentMap ->
+                            val existing = currentMap[chat.id] ?: emptyList()
+                            val existingIds = existing.map { it.id }.toSet()
+                            val merged = existing + cloudMsgs.filterNot { it.id in existingIds }
+                            currentMap + (chat.id to merged.sortedBy { it.timestamp })
+                        }
+                    }
+                }
             }
         }
     }
@@ -381,6 +438,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _replyingMessage.value = null
+
+        // Sync to Firestore in real time!
+        repository.syncMessage(chatId, newMessage)
 
         viewModelScope.launch {
             delay(500)
@@ -463,6 +523,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 } else it
             }
         }
+
+        repository.syncMessage(chatId, newMessage)
     }
 
     fun sendGifMessage(chatId: String, gifTitle: String, gifUrl: String) {
@@ -496,6 +558,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 } else it
             }
         }
+
+        repository.syncMessage(chatId, newMessage)
     }
 
     fun sendLocationMessage(chatId: String, location: LocationData) {
@@ -533,7 +597,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // If live location, start real background GPS tracking!
+        repository.syncMessage(chatId, newMessage)
+
         if (isLive) {
             repository.locationHelper.startLiveLocationUpdates(location.liveDurationMinutes) { updatedLoc ->
                 _messages.update { map ->
@@ -585,6 +650,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 } else it
             }
         }
+
+        repository.syncMessage(chatId, newMessage)
     }
 
     fun votePoll(messageId: String, optionId: Int) {

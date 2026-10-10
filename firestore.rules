@@ -20,5 +20,10 @@ service cloud.firestore {
         allow read, write: if isAuthenticated();
       }
     }
+
+    match /app_system/{docId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
   }
 }

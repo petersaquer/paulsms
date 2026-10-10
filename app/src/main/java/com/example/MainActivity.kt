@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -72,6 +74,9 @@ fun PaulApp(
     val isFirebaseSignedIn by viewModel.isFirebaseSignedIn.collectAsStateWithLifecycle()
     val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
     val registeredCount by viewModel.registeredCount.collectAsStateWithLifecycle()
+    val latestAppUpdate by viewModel.latestAppUpdate.collectAsStateWithLifecycle()
+
+    var dismissedUpdateVersion by remember { mutableStateOf<Int?>(null) }
 
     val chats by viewModel.chats.collectAsStateWithLifecycle()
     val messagesMap by viewModel.messages.collectAsStateWithLifecycle()
@@ -331,6 +336,7 @@ fun PaulApp(
                     AdminPanelScreen(
                         currentUser = curr,
                         allUsers = allUsers,
+                        latestAppUpdate = latestAppUpdate,
                         onUpdateRole = { userId, newRole ->
                             viewModel.updateUserRole(
                                 userId = userId,
@@ -367,6 +373,21 @@ fun PaulApp(
                                 }
                             )
                         },
+                        onPublishUpdate = { versionName, versionCode, apkUrl, changelog, isMandatory ->
+                            viewModel.publishAppUpdate(
+                                versionName = versionName,
+                                versionCode = versionCode,
+                                apkUrl = apkUrl,
+                                changelog = changelog,
+                                isMandatory = isMandatory,
+                                onComplete = {
+                                    Toast.makeText(context, "¡Actualización publicada exitosamente!", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = {
+                                    Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+                                }
+                            )
+                        },
                         onBack = { currentScreen = PaulScreen.CHAT_LIST }
                     )
                 } else {
@@ -374,5 +395,69 @@ fun PaulApp(
                 }
             }
         }
+    }
+
+    // In-App Update Prompt Dialog for All Users
+    val update = latestAppUpdate
+    if (update != null && update.versionCode > 1 && dismissedUpdateVersion != update.versionCode) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                if (!update.isMandatory) dismissedUpdateVersion = update.versionCode
+            },
+            title = {
+                androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    androidx.compose.material3.Text("🚀 ¡Nueva Versión v${update.versionName}!")
+                }
+            },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    if (update.releaseDateFormatted.isNotBlank()) {
+                        androidx.compose.material3.Text(
+                            text = "Lanzada el: ${update.releaseDateFormatted}",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(6.dp))
+                    }
+                    androidx.compose.material3.Text(
+                        text = "Novedades:",
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                    )
+                    androidx.compose.material3.Text(
+                        text = update.changelog,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.Button(
+                    onClick = {
+                        if (update.apkDownloadUrl.isNotBlank()) {
+                            try {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.apkDownloadUrl))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Descargando actualización...", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Descargando actualización del servidor...", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.TelegramBlue)
+                ) {
+                    androidx.compose.material3.Text("Actualizar Ahora")
+                }
+            },
+            dismissButton = {
+                if (!update.isMandatory) {
+                    androidx.compose.material3.TextButton(
+                        onClick = { dismissedUpdateVersion = update.versionCode }
+                    ) {
+                        androidx.compose.material3.Text("Más tarde")
+                    }
+                }
+            }
+        )
     }
 }
