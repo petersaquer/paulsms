@@ -87,6 +87,9 @@ fun SettingsScreen(
     privacyLastSeen: String = "Todos",
     privacyForwardProtect: Boolean = true,
     privacyPasscodeLock: Boolean = false,
+    showNotifications: Boolean = true,
+    notificationSound: String = "Predeterminado",
+    notificationVibration: Boolean = true,
     onToggleDarkMode: () -> Unit,
     onSignInGoogle: () -> Unit,
     onSignOutGoogle: () -> Unit,
@@ -95,6 +98,9 @@ fun SettingsScreen(
     onUpdatePrivacyLastSeen: (String) -> Unit = {},
     onToggleForwardProtect: (Boolean) -> Unit = {},
     onTogglePasscodeLock: (Boolean) -> Unit = {},
+    onToggleNotifications: (Boolean) -> Unit = {},
+    onUpdateNotificationSound: (String) -> Unit = {},
+    onToggleNotificationVibration: (Boolean) -> Unit = {},
     onOpenAdminPanel: () -> Unit = {},
     onUpdateProfile: (String, String) -> Unit = { _, _ -> },
     onBack: () -> Unit
@@ -278,7 +284,7 @@ fun SettingsScreen(
 
             SettingsItem(
                 title = "Notificaciones",
-                subtitle = "Activado",
+                subtitle = if (showNotifications) "Activado" else "Desactivado",
                 icon = Icons.Default.Notifications,
                 onClick = { showNotificationsDialog = true }
             )
@@ -330,11 +336,14 @@ fun SettingsScreen(
     }
 
     if (showNotificationsDialog) {
-        AlertDialog(
-            onDismissRequest = { showNotificationsDialog = false },
-            title = { Text("Notificaciones") },
-            text = { Text("Las notificaciones están configuradas por defecto.") },
-            confirmButton = { TextButton(onClick = { showNotificationsDialog = false }) { Text("OK") } }
+        NotificationsDialog(
+            enabled = showNotifications,
+            sound = notificationSound,
+            vibration = notificationVibration,
+            onToggleEnabled = onToggleNotifications,
+            onUpdateSound = onUpdateNotificationSound,
+            onToggleVibration = onToggleNotificationVibration,
+            onDismiss = { showNotificationsDialog = false }
         )
     }
 
@@ -368,6 +377,64 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+@Composable
+private fun NotificationsDialog(
+    enabled: Boolean,
+    sound: String,
+    vibration: Boolean,
+    onToggleEnabled: (Boolean) -> Unit,
+    onUpdateSound: (String) -> Unit,
+    onToggleVibration: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val soundOptions = listOf("Predeterminado", "Campana", "Nota", "WhatsApp", "Ninguno")
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Configuración de Notificaciones") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Activar notificaciones", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                    Switch(checked = enabled, onCheckedChange = onToggleEnabled)
+                }
+                
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                
+                Text("Sonido de mensaje", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                soundOptions.forEach { opt ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically, 
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { onUpdateSound(opt) }.padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(selected = sound == opt, onClick = { onUpdateSound(opt) }, enabled = enabled)
+                        Text(opt, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                    }
+                }
+                
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Vibración", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                    Switch(checked = vibration, onCheckedChange = onToggleVibration, enabled = enabled)
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Estas opciones aplican a todos los chats individuales. Puedes personalizar chats específicos tocando en su nombre.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Listo")
+            }
+        }
+    )
 }
 
 @Composable

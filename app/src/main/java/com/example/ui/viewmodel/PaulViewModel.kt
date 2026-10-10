@@ -22,6 +22,7 @@ import com.example.data.model.StatusType
 import com.example.data.model.StatusViewer
 import com.example.data.model.User
 import com.example.data.model.UserStatusGroup
+import com.example.data.NotificationHelper
 import com.example.data.repository.FirebaseChatRepository
 import com.example.data.sample.SampleData
 import kotlinx.coroutines.Job
@@ -110,6 +111,20 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _privacyPasscodeLock = MutableStateFlow(false)
     val privacyPasscodeLock: StateFlow<Boolean> = _privacyPasscodeLock.asStateFlow()
+
+    // Notification settings
+    private val _showNotifications = MutableStateFlow(true)
+    val showNotifications: StateFlow<Boolean> = _showNotifications.asStateFlow()
+
+    private val _notificationSound = MutableStateFlow("Predeterminado")
+    val notificationSound: StateFlow<String> = _notificationSound.asStateFlow()
+
+    private val _notificationVibration = MutableStateFlow(true)
+    val notificationVibration: StateFlow<Boolean> = _notificationVibration.asStateFlow()
+
+    private val notificationHelper = NotificationHelper(application.applicationContext)
+    private val globalListeners = mutableMapOf<String, Job>()
+    private val seenMessageIds = mutableSetOf<String>()
 
     private val _accountSelfDestructPeriod = MutableStateFlow("6 meses")
     val accountSelfDestructPeriod: StateFlow<String> = _accountSelfDestructPeriod.asStateFlow()
@@ -243,6 +258,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                         _chats.value = listOf(SampleData.createSavedMessagesChat(user))
                     }
                 }
+                startGlobalNotificationListener()
             } catch (e: Exception) {
                 Log.w("PaulViewModel", "Safe init exception: ${e.message}")
             }
@@ -1307,4 +1323,45 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     fun setPrivacyForwardProtect(enabled: Boolean) { _privacyForwardProtect.value = enabled }
     fun setPrivacyPasscodeLock(enabled: Boolean) { _privacyPasscodeLock.value = enabled }
     fun setAccountSelfDestructPeriod(period: String) { _accountSelfDestructPeriod.value = period }
+
+    // Notification preference updates
+    fun setShowNotifications(enabled: Boolean) { _showNotifications.value = enabled }
+    fun setNotificationSound(sound: String) { _notificationSound.value = sound }
+    fun setNotificationVibration(enabled: Boolean) { _notificationVibration.value = enabled }
+
+    /**
+     * Start background observation for all active chats to show notifications
+     */
+    fun startGlobalNotificationListener() {
+        viewModelScope.launch {
+            _chats.collect { chatList ->
+                chatList.forEach { chat ->
+                    if (!globalListeners.containsKey(chat.id)) {
+                        val job = viewModelScope.launch {
+                            repository.observeRealtimeMessages(chat.id).collect { messages ->
+                                if (messages.isNotEmpty()) {
+                                    messages.forEach { msg ->
+                                        // If it's a new message, not from me, and not already seen
+                                        if (!msg.isOutgoing && !seenMessageIds.contains(msg.id)) {
+                                            // Only notify if notifications are enabled and it's not the currently active chat
+                                            if (_showNotifications.value && _selectedChat.value?.id != chat.id) {
+                                                notificationHelper.showMessageNotification(
+                                                    senderName = chat.title,
+                                                    messageText = msg.text,
+                                                    chatId = chat.id,
+                                                    soundName = _notificationSound.value
+                                                )
+                                            }
+                                        }
+                                        seenMessageIds.add(msg.id)
+                                    }
+                                }
+                            }
+                        }
+                        globalListeners[chat.id] = job
+                    }
+                }
+            }
+        }
+    }
 }

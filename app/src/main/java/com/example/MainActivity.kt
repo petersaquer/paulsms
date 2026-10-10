@@ -98,6 +98,10 @@ fun PaulApp(
     val privacyForwardProtect by viewModel.privacyForwardProtect.collectAsStateWithLifecycle()
     val privacyPasscodeLock by viewModel.privacyPasscodeLock.collectAsStateWithLifecycle()
 
+    val showNotifications by viewModel.showNotifications.collectAsStateWithLifecycle()
+    val notificationSound by viewModel.notificationSound.collectAsStateWithLifecycle()
+    val notificationVibration by viewModel.notificationVibration.collectAsStateWithLifecycle()
+
     val userStatusGroups by viewModel.userStatusGroups.collectAsStateWithLifecycle()
     val selectedStatusGroup by viewModel.selectedStatusGroup.collectAsStateWithLifecycle()
     val selectedStatusIndex by viewModel.selectedStatusIndex.collectAsStateWithLifecycle()
@@ -107,9 +111,35 @@ fun PaulApp(
     val isSearchingContacts by viewModel.isSearchingContacts.collectAsStateWithLifecycle()
     val savedContacts by viewModel.savedContacts.collectAsStateWithLifecycle()
 
+    // Notification permission request
+    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(context, "Notificaciones desactivadas", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     var createStatusInitialType by remember { mutableStateOf<StatusType?>(null) }
 
     var currentScreen by remember { mutableStateOf(if (currentUser == null) PaulScreen.AUTH else PaulScreen.CHAT_LIST) }
+
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        
+        // Handle notification click intent
+        activity?.intent?.getStringExtra("chat_id")?.let { cid ->
+            val chat = chats.find { it.id == cid }
+            if (chat != null) {
+                viewModel.selectChat(chat)
+                currentScreen = PaulScreen.CHAT_DETAIL
+                // Clear the extra
+                activity.intent.removeExtra("chat_id")
+            }
+        }
+    }
 
     LaunchedEffect(currentUser) {
         if (currentUser == null) {
@@ -338,6 +368,9 @@ fun PaulApp(
                     privacyLastSeen = privacyLastSeen,
                     privacyForwardProtect = privacyForwardProtect,
                     privacyPasscodeLock = privacyPasscodeLock,
+                    showNotifications = showNotifications,
+                    notificationSound = notificationSound,
+                    notificationVibration = notificationVibration,
                     onToggleDarkMode = { viewModel.toggleDarkMode() },
                     onSignInGoogle = {
                         activity?.let { act ->
@@ -365,6 +398,9 @@ fun PaulApp(
                     onUpdatePrivacyLastSeen = { viewModel.setPrivacyLastSeen(it) },
                     onToggleForwardProtect = { viewModel.setPrivacyForwardProtect(it) },
                     onTogglePasscodeLock = { viewModel.setPrivacyPasscodeLock(it) },
+                    onToggleNotifications = { viewModel.setShowNotifications(it) },
+                    onUpdateNotificationSound = { viewModel.setNotificationSound(it) },
+                    onToggleNotificationVibration = { viewModel.setNotificationVibration(it) },
                     onOpenAdminPanel = { currentScreen = PaulScreen.ADMIN_PANEL },
                     onUpdateProfile = { name, bio ->
                         viewModel.updateUserProfile(

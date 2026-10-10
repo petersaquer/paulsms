@@ -55,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.Message
+import com.example.ui.components.EmojiPickerSheet
 import com.example.ui.theme.TelegramAccent
 import com.example.ui.theme.TelegramBlue
 
@@ -71,10 +72,22 @@ fun ChatInputBar(
     onStartRecording: () -> Unit,
     onCancelRecording: () -> Unit,
     onStopRecordingAndSend: () -> Unit,
+    onOpenEmojiPicker: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var text by remember { mutableStateOf("") }
     var isViewOnce by remember { mutableStateOf(false) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
+
+    if (showEmojiPicker) {
+        EmojiPickerSheet(
+            onDismiss = { showEmojiPicker = false },
+            onEmojiSelected = { emoji ->
+                text += emoji
+                // showEmojiPicker = false // Don't close on selection (WhatsApp style)
+            }
+        )
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -300,12 +313,10 @@ fun ChatInputBar(
 
                             Spacer(modifier = Modifier.width(4.dp))
 
-                            // Quick Emoji
+                            // Emoji Picker Trigger
                             IconButton(
-                                onClick = {
-                                    text += " 😊"
-                                },
-                                modifier = Modifier.size(34.dp)
+                                onClick = { showEmojiPicker = true },
+                                modifier = Modifier.size(34.dp).testTag("emoji_picker_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.SentimentSatisfiedAlt,
