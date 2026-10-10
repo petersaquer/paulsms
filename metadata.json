@@ -1,0 +1,6 @@
+{
+  "name": "Paul",
+  "description": "Aplicación de mensajería rápida, elegante y segura inspirada en Telegram, con chats directos, grupos, canales, notas de voz y asistente bot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
