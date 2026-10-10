@@ -49,6 +49,7 @@ import com.example.ui.theme.TelegramBlue
 fun LocationMessageWidget(
     location: LocationData,
     isOutgoing: Boolean,
+    onClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "live_radar")
@@ -76,7 +77,7 @@ fun LocationMessageWidget(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
-            .clickable { /* Tap to view in map */ }
+            .clickable { onClick() }
     ) {
         // Map Preview
         Box(

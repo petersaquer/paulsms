@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataUsage
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
@@ -55,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -94,6 +96,7 @@ fun SettingsScreen(
     onToggleForwardProtect: (Boolean) -> Unit = {},
     onTogglePasscodeLock: (Boolean) -> Unit = {},
     onOpenAdminPanel: () -> Unit = {},
+    onUpdateProfile: (String, String) -> Unit = { _, _ -> },
     onBack: () -> Unit
 ) {
     val user = currentUser
@@ -101,6 +104,11 @@ fun SettingsScreen(
     var showBlockedUsersDialog by remember { mutableStateOf(false) }
     var showNotificationsDialog by remember { mutableStateOf(false) }
     var showDataUsageDialog by remember { mutableStateOf(false) }
+    var showEditProfileDialog by remember { mutableStateOf(false) }
+
+    // Edit profile form state
+    var editName by remember(user) { mutableStateOf(user?.displayName ?: "") }
+    var editBio by remember(user) { mutableStateOf(user?.bio ?: "") }
 
     Scaffold(
         topBar = {
@@ -156,11 +164,23 @@ fun SettingsScreen(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = user?.name ?: "Paul Usuario",
+                            text = user?.displayName ?: user?.name ?: "Paul Usuario",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = { showEditProfileDialog = true },
+                            modifier = Modifier.size(24.dp).testTag("edit_profile_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Editar perfil",
+                                tint = TelegramBlue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                     Text(
                         text = user?.username ?: "@paul_user",
@@ -195,7 +215,7 @@ fun SettingsScreen(
                 }
             }
 
-            // ADMIN PANEL BANNER if user is admin or moderator
+            // ADMIN PANEL BANNER
             if (user?.isAdmin == true || user?.isModerator == true) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Card(
@@ -205,103 +225,16 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .clickable { onOpenAdminPanel() }
-                        .testTag("settings_open_admin_panel")
                 ) {
                     Row(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                        Icon(Icons.Default.Security, contentDescription = null, tint = Color.White)
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "👑 Panel de Administración",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                            Text(
-                                text = "Control total: lista de usuarios, roles, bloquear y eliminar cuentas",
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 11.sp
-                            )
-                        }
-                        Text("Abrir ›", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Firebase Cloud Section
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isFirebaseSignedIn) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (isFirebaseSignedIn) Icons.Default.CloudDone else Icons.Default.Security,
-                            contentDescription = null,
-                            tint = if (isFirebaseSignedIn) Color(0xFF2E7D32) else TelegramBlue,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (isFirebaseSignedIn) "Firebase Cloud Sincronizado" else "Iniciar Sesión en Firebase Cloud",
-                                fontWeight = FontWeight.Bold,
-                                color = if (isFirebaseSignedIn) Color(0xFF1B5E20) else MaterialTheme.colorScheme.onSurface,
-                                fontSize = 14.sp
-                            )
-                            Text(
-                                text = if (isFirebaseSignedIn)
-                                    "Base de datos Firestore activa. Mensajes y contactos sincronizados."
-                                else
-                                    "Inicia sesión con Google para sincronizar tus contactos y chats en la nube.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (isFirebaseSignedIn) {
-                        OutlinedButton(
-                            onClick = onSignOutGoogle,
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
-                            modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("Cerrar Sesión")
-                        }
-                    } else {
-                        Button(
-                            onClick = onSignInGoogle,
-                            colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("google_signin_button")
-                        ) {
-                            Text("Iniciar sesión con Google")
+                            Text("Panel de Administración", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("Control total de usuarios y roles", color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp)
                         }
                     }
                 }
@@ -309,121 +242,69 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Settings Category: AJUSTES
-            Text(
-                text = "AJUSTES",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = TelegramBlue,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
-            )
+            // Firebase Cloud Section
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(if (isFirebaseSignedIn) "Firebase Sincronizado ✅" else "Sincronización en la Nube", fontWeight = FontWeight.Bold)
+                    if (!isFirebaseSignedIn) {
+                        Button(onClick = onSignInGoogle, modifier = Modifier.fillMaxWidth()) {
+                            Text("Iniciar sesión con Google")
+                        }
+                    } else {
+                        TextButton(onClick = onSignOutGoogle) { Text("Cerrar Sesión", color = Color.Red) }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             SettingsItem(
                 title = "Privacidad y seguridad",
-                subtitle = "Bloqueo, autodestrucción, E2EE y visibilidad",
+                subtitle = "Bloqueo, visibilidad y E2EE",
                 icon = Icons.Default.Lock,
                 onClick = { showPrivacyDialog = true }
             )
 
             SettingsItem(
                 title = "Usuarios bloqueados",
-                subtitle = if (blockedChats.isEmpty()) "Ninguno" else "${blockedChats.size} usuario(s) bloqueado(s)",
+                subtitle = "${blockedChats.size} usuarios",
                 icon = Icons.Default.Block,
                 onClick = { showBlockedUsersDialog = true }
             )
 
             SettingsItem(
-                title = "Notificaciones y sonidos",
-                subtitle = "Activado para todos los chats",
+                title = "Notificaciones",
+                subtitle = "Activado",
                 icon = Icons.Default.Notifications,
                 onClick = { showNotificationsDialog = true }
             )
 
             SettingsItem(
                 title = "Datos y almacenamiento",
-                subtitle = "Uso de red, caché y base de datos local",
+                subtitle = "Uso de red",
                 icon = Icons.Default.DataUsage,
                 onClick = { showDataUsageDialog = true }
             )
 
-            SettingsItem(
-                title = "Ajustes de chats",
-                subtitle = "Burbujas tipo Telegram, stickers y temas",
-                icon = Icons.Default.Chat
-            )
-
-            // Dark Mode Switch Item
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onToggleDarkMode() }
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().clickable { onToggleDarkMode() }.padding(horizontal = 18.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.DarkMode,
-                    contentDescription = "Modo nocturno",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp)
-                )
+                Icon(Icons.Default.DarkMode, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Modo nocturno",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (isDarkMode) "Tema oscuro Telegram activado" else "Tema claro clásico",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("Modo nocturno", fontWeight = FontWeight.Medium)
+                    Text(if (isDarkMode) "Activado" else "Desactivado", fontSize = 11.sp)
                 }
-                Switch(
-                    checked = isDarkMode,
-                    onCheckedChange = { onToggleDarkMode() },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = TelegramBlue
-                    )
-                )
-            }
-
-            SettingsItem(
-                title = "Idioma",
-                subtitle = "Español",
-                icon = Icons.Default.Language
-            )
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 12.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-            )
-
-            // App details
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Paul Messenger para Android",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "Firebase Cloud & Cifrado Extremo a Extremo (E2EE)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TelegramBlue
-                )
+                Switch(checked = isDarkMode, onCheckedChange = { onToggleDarkMode() })
             }
         }
     }
 
-    // Privacy & Security Dialog
     if (showPrivacyDialog) {
         PrivacyDialog(
             phoneVisibility = privacyPhone,
@@ -431,10 +312,7 @@ fun SettingsScreen(
             forwardProtection = privacyForwardProtect,
             passcodeLock = privacyPasscodeLock,
             blockedCount = blockedChats.size,
-            onOpenBlocked = {
-                showPrivacyDialog = false
-                showBlockedUsersDialog = true
-            },
+            onOpenBlocked = { showPrivacyDialog = false; showBlockedUsersDialog = true },
             onUpdatePhone = onUpdatePrivacyPhone,
             onUpdateLastSeen = onUpdatePrivacyLastSeen,
             onToggleForward = onToggleForwardProtect,
@@ -443,7 +321,6 @@ fun SettingsScreen(
         )
     }
 
-    // Blocked Users Dialog
     if (showBlockedUsersDialog) {
         BlockedUsersDialog(
             blockedChats = blockedChats,
@@ -452,38 +329,42 @@ fun SettingsScreen(
         )
     }
 
-    // Notifications Dialog
     if (showNotificationsDialog) {
         AlertDialog(
             onDismissRequest = { showNotificationsDialog = false },
-            title = { Text("Notificaciones y sonidos", fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                    Text("• Notificaciones de chats privados: Activadas\n• Notificaciones de grupos: Activadas\n• Sonido de mensaje: Tono Telegram\n• Vibración: Predeterminada")
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showNotificationsDialog = false }) {
-                    Text("Aceptar")
-                }
-            }
+            title = { Text("Notificaciones") },
+            text = { Text("Las notificaciones están configuradas por defecto.") },
+            confirmButton = { TextButton(onClick = { showNotificationsDialog = false }) { Text("OK") } }
         )
     }
 
-    // Data Usage Dialog
     if (showDataUsageDialog) {
         AlertDialog(
             onDismissRequest = { showDataUsageDialog = false },
-            title = { Text("Datos y almacenamiento", fontWeight = FontWeight.Bold) },
+            title = { Text("Datos") },
+            text = { Text("Caché y uso de red optimizados.") },
+            confirmButton = { TextButton(onClick = { showDataUsageDialog = false }) { Text("OK") } }
+        )
+    }
+
+    if (showEditProfileDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditProfileDialog = false },
+            title = { Text("Editar Perfil") },
             text = {
                 Column {
-                    Text("• Uso de red móvil: Optimizado\n• Descarga automática: Solo con Wi-Fi\n• Cifrado local E2EE: Almacenado en sandbox seguro\n• Base de datos Firestore: Cache local activa")
+                    OutlinedTextField(value = editName, onValueChange = { editName = it }, label = { Text("Nombre") })
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = editBio, onValueChange = { editBio = it }, label = { Text("Bio") })
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showDataUsageDialog = false }) {
-                    Text("Aceptar")
+                Button(onClick = { onUpdateProfile(editName, editBio); showEditProfileDialog = false }) {
+                    Text("Guardar")
                 }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditProfileDialog = false }) { Text("Cancelar") }
             }
         )
     }
@@ -504,168 +385,26 @@ private fun PrivacyDialog(
     onDismiss: () -> Unit
 ) {
     val options = listOf("Todos", "Mis contactos", "Nadie")
-
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = TelegramBlue)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Privacidad y Seguridad", fontWeight = FontWeight.Bold)
-            }
-        },
+        title = { Text("Privacidad") },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-            ) {
-                // E2EE Status Card
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = Color(0xFF2E7D32))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "Cifrado Extremo a Extremo Activo",
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1B5E20),
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = "Los chats fuera de Firebase están blindados en este dispositivo.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF2E7D32),
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Blocked contacts shortcut
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onOpenBlocked() }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(imageVector = Icons.Default.Block, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Usuarios bloqueados", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text(
-                            text = if (blockedCount == 0) "Ningún usuario bloqueado" else "$blockedCount usuario(s)",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Text("Ver", color = TelegramBlue, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                // Passcode lock switch
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(imageVector = Icons.Default.Fingerprint, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Bloqueo con PIN o Biometría", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text("Bloquea Paul al salir de la aplicación", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(
-                        checked = passcodeLock,
-                        onCheckedChange = onTogglePasscode,
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = TelegramBlue)
-                    )
-                }
-
-                // Forward protection switch
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(imageVector = Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Proteger autoría al reenviar", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text("Oculta tu enlace de perfil al reenviar", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(
-                        checked = forwardProtection,
-                        onCheckedChange = onToggleForward,
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = TelegramBlue)
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                // Phone visibility
-                Text("¿Quién puede ver mi número de teléfono?", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("¿Quién puede ver mi número?", fontWeight = FontWeight.Bold)
                 options.forEach { opt ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onUpdatePhone(opt) }
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = phoneVisibility == opt,
-                            onClick = { onUpdatePhone(opt) },
-                            colors = RadioButtonDefaults.colors(selectedColor = TelegramBlue)
-                        )
-                        Text(text = opt, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onUpdatePhone(opt) }) {
+                        RadioButton(selected = phoneVisibility == opt, onClick = { onUpdatePhone(opt) })
+                        Text(opt)
                     }
                 }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Last seen visibility
-                Text("¿Quién puede ver mi última vez y en línea?", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                options.forEach { opt ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onUpdateLastSeen(opt) }
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = lastSeenVisibility == opt,
-                            onClick = { onUpdateLastSeen(opt) },
-                            colors = RadioButtonDefaults.colors(selectedColor = TelegramBlue)
-                        )
-                        Text(text = opt, fontSize = 13.sp)
-                    }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bloqueo de aplicación", modifier = Modifier.weight(1f))
+                    Switch(checked = passcodeLock, onCheckedChange = onTogglePasscode)
                 }
             }
         },
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
-            ) {
-                Text("Guardar")
-            }
-        }
+        confirmButton = { Button(onClick = onDismiss) { Text("Cerrar") } }
     )
 }
 
@@ -677,99 +416,32 @@ private fun BlockedUsersDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Default.Block, contentDescription = null, tint = Color.Red)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Usuarios Bloqueados", fontWeight = FontWeight.Bold)
-            }
-        },
+        title = { Text("Bloqueados") },
         text = {
-            if (blockedChats.isEmpty()) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "No tienes ningún usuario bloqueado.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    items(blockedChats, key = { it.id }) { chat ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = chat.title,
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    text = chat.username.ifEmpty { chat.contactPhone ?: "Sin usuario" },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Button(
-                                onClick = { onUnblock(chat.id) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Desbloquear", fontSize = 12.sp)
-                            }
+            if (blockedChats.isEmpty()) Text("No hay usuarios bloqueados")
+            else {
+                LazyColumn {
+                    items(blockedChats) { chat ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(chat.title, modifier = Modifier.weight(1f))
+                            Button(onClick = { onUnblock(chat.id) }) { Text("Desbloquear") }
                         }
                     }
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cerrar")
-            }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } }
     )
 }
 
 @Composable
-private fun SettingsItem(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    onClick: () -> Unit = {}
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = title,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(24.dp)
-        )
+private fun SettingsItem(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit = {}) {
+    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Column {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

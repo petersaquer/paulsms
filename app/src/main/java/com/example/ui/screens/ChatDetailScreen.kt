@@ -64,14 +64,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.data.model.Chat
 import com.example.data.model.LocationData
 import com.example.data.model.Message
 import com.example.ui.components.AttachmentSheet
 import com.example.ui.components.AvatarView
 import com.example.ui.components.ChatInputBar
+import com.example.ui.components.ContactViewerDialog
 import com.example.ui.components.GifPickerSheet
 import com.example.ui.components.LocationPickerSheet
+import com.example.ui.components.MapViewerDialog
+import com.example.ui.components.MediaViewerDialog
 import com.example.ui.components.MessageBubble
 import com.example.ui.components.ViewOnceDialog
 import com.example.ui.theme.ChatPatternDark
@@ -105,11 +111,83 @@ fun ChatDetailScreen(
     onClearChat: () -> Unit,
     onStartVoiceRecording: () -> Unit,
     onCancelVoiceRecording: () -> Unit,
-    onStopVoiceRecordingAndSend: () -> Unit
+    onStopVoiceRecordingAndSend: () -> Unit,
+    onSendPhotoMessage: (photoUrl: String, caption: String) -> Unit = { _, _ -> },
+    onSendVideoMessage: (videoUrl: String, caption: String) -> Unit = { _, _ -> },
+    onSendFileMessage: (fileUrl: String, fileName: String, fileSize: String) -> Unit = { _, _, _ -> },
+    onSendContactMessage: (contactName: String, contactPhone: String) -> Unit = { _, _ -> }
 ) {
     var isSearchingInChat by remember { mutableStateOf(false) }
     var searchChatQuery by remember { mutableStateOf("") }
     var currentSearchMatchIndex by remember { mutableIntStateOf(0) }
+
+    // Media & Map Viewer Dialog states
+    var viewingLocationInMap by remember { mutableStateOf<LocationData?>(null) }
+    var viewingMediaUrl by remember { mutableStateOf<String?>(null) }
+    var viewingIsVideo by remember { mutableStateOf(false) }
+    var viewingMediaCaption by remember { mutableStateOf<String?>(null) }
+    var viewingContact by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    fun createTempUri(): android.net.Uri {
+        val file = java.io.File(context.cacheDir, "camera_capture_${System.currentTimeMillis()}.jpg")
+        return androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+    }
+
+    val cameraPhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            tempCameraUri?.let { onSendPhotoMessage(it.toString(), "📷 Foto de cámara") }
+        }
+    }
+
+    val cameraVideoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CaptureVideo()
+    ) { success ->
+        if (success) {
+            tempCameraUri?.let { onSendVideoMessage(it.toString(), "🎬 Video de cámara") }
+        }
+    }
+
+    // Media pickers launchers
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val uriStr = uri.toString()
+            val mimeType = context.contentResolver.getType(uri)
+            if (mimeType?.startsWith("video") == true) {
+                onSendVideoMessage(uriStr, "🎬 Video compartido")
+            } else {
+                onSendPhotoMessage(uriStr, "📷 Foto compartida")
+            }
+        }
+    }
+
+    val fileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val name = uri.lastPathSegment?.substringAfterLast("/") ?: "Documento_adjunto"
+            onSendFileMessage(uri.toString(), name, "Archivo adjunto")
+        }
+    }
+
+    val audioLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val name = uri.lastPathSegment?.substringAfterLast("/") ?: "Audio_compartido.mp3"
+            onSendFileMessage(uri.toString(), "🎵 $name", "Audio MP3")
+        }
+    }
 
     val matchingIndices = remember(messages, searchChatQuery) {
         if (searchChatQuery.isBlank()) emptyList()
@@ -324,7 +402,14 @@ fun ChatDetailScreen(
                             )
                         }
 
-                        IconButton(onClick = { /* Call */ }) {
+                        IconButton(onClick = {
+                            try {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:${chat.contactPhone ?: "+595981123456"}"))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                // Fallback or permission check
+                            }
+                        }) {
                             Icon(
                                 imageVector = Icons.Default.Call,
                                 contentDescription = "Llamar",
@@ -555,11 +640,38 @@ fun ChatDetailScreen(
                         onReply = onReplyMessage,
                         onReaction = onReaction,
                         onVotePoll = onVotePoll,
-                        onOpenViewOnce = { viewingOnceMessage = it }
+                        onOpenViewOnce = { viewingOnceMessage = it },
+                        onOpenMap = { loc -> viewingLocationInMap = loc },
+                        onOpenMedia = { url, isVid, cap ->
+                            viewingMediaUrl = url
+                            viewingIsVideo = isVid
+                            viewingMediaCaption = cap
+                        },
+                        onOpenContact = { name, phone ->
+                            viewingContact = name to phone
+                        }
                     )
                 }
             }
         }
+    }
+
+    // Interactive Map Viewer Dialog
+    viewingLocationInMap?.let { loc ->
+        MapViewerDialog(
+            location = loc,
+            onDismiss = { viewingLocationInMap = null }
+        )
+    }
+
+    // Media Viewer Dialog
+    viewingMediaUrl?.let { url ->
+        MediaViewerDialog(
+            mediaUrl = url,
+            isVideo = viewingIsVideo,
+            caption = viewingMediaCaption,
+            onDismiss = { viewingMediaUrl = null }
+        )
     }
 
     // View Once Dialog
@@ -573,15 +685,30 @@ fun ChatDetailScreen(
         )
     }
 
+    // Contact Viewer Dialog
+    viewingContact?.let { (name, phone) ->
+        ContactViewerDialog(
+            name = name,
+            phone = phone,
+            onDismiss = { viewingContact = null },
+            onSendMessage = { text ->
+                onSendMessage(text, false)
+                viewingContact = null
+            }
+        )
+    }
+
     // Attachment bottom sheet
     if (showAttachmentSheet) {
         AttachmentSheet(
             onDismiss = { showAttachmentSheet = false },
             onSelectCamera = {
-                onSendMessage("📸 [Foto capturada con la cámara]", false)
+                val uri = createTempUri()
+                tempCameraUri = uri
+                cameraPhotoLauncher.launch(uri)
             },
             onSelectGallery = {
-                onSendMessage("📷 [Foto seleccionada de la galería]", false)
+                galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
             },
             onSelectGif = {
                 showGifPickerSheet = true
@@ -593,13 +720,19 @@ fun ChatDetailScreen(
                 showCreatePollDialog = true
             },
             onSelectFile = {
-                onSendMessage("📄 [Archivo / Documento adjunto]", false)
+                fileLauncher.launch("*/*")
             },
             onSelectContact = {
-                onSendMessage("👤 [Tarjeta de contacto compartida]", false)
+                // Better mock contact sharing
+                onSendContactMessage("Alex Dev", "+595 981 123 456")
             },
             onSelectAudio = {
-                onSendMessage("🎵 [Archivo de audio compartido]", false)
+                audioLauncher.launch("audio/*")
+            },
+            onSelectVideoCamera = {
+                val uri = createTempUri()
+                tempCameraUri = uri
+                cameraVideoLauncher.launch(uri)
             }
         )
     }

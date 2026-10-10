@@ -308,6 +308,18 @@ fun PaulApp(
                         },
                         onStopVoiceRecordingAndSend = {
                             viewModel.stopVoiceRecordingAndSend(chat.id)
+                        },
+                        onSendPhotoMessage = { url, cap ->
+                            viewModel.sendPhotoMessage(chat.id, url, cap)
+                        },
+                        onSendVideoMessage = { url, cap ->
+                            viewModel.sendVideoMessage(chat.id, url, cap)
+                        },
+                        onSendFileMessage = { url, name, size ->
+                            viewModel.sendFileMessage(chat.id, url, name, size)
+                        },
+                        onSendContactMessage = { name, phone ->
+                            viewModel.sendContactMessage(chat.id, name, phone)
                         }
                     )
                 } else {
@@ -354,6 +366,14 @@ fun PaulApp(
                     onToggleForwardProtect = { viewModel.setPrivacyForwardProtect(it) },
                     onTogglePasscodeLock = { viewModel.setPrivacyPasscodeLock(it) },
                     onOpenAdminPanel = { currentScreen = PaulScreen.ADMIN_PANEL },
+                    onUpdateProfile = { name, bio ->
+                        viewModel.updateUserProfile(
+                            newDisplayName = name,
+                            newBio = bio,
+                            onComplete = { Toast.makeText(context, "Perfil actualizado", Toast.LENGTH_SHORT).show() },
+                            onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+                        )
+                    },
                     onBack = { currentScreen = PaulScreen.CHAT_LIST }
                 )
             }
@@ -514,7 +534,9 @@ fun PaulApp(
 
     // In-App Update Prompt Dialog for All Users
     val update = latestAppUpdate
-    if (update != null && update.versionCode > 1 && dismissedUpdateVersion != update.versionCode) {
+    val currentVersionCode = try { com.example.BuildConfig.VERSION_CODE } catch (e: Exception) { 1 }
+    
+    if (update != null && update.versionCode > currentVersionCode && dismissedUpdateVersion != update.versionCode) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = {
                 if (!update.isMandatory) dismissedUpdateVersion = update.versionCode

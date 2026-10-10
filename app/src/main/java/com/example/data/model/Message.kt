@@ -10,11 +10,14 @@ enum class MessageType {
     TEXT,
     VOICE,
     PHOTO,
+    VIDEO,
     POLL,
     STICKER,
     GIF,
     LOCATION,
-    LIVE_LOCATION
+    LIVE_LOCATION,
+    FILE,
+    CONTACT
 }
 
 data class Message(
@@ -37,6 +40,13 @@ data class Message(
     val pollData: PollData? = null,
     val locationData: LocationData? = null,
     val photoUrl: String? = null,
+    val videoUrl: String? = null,
+    val fileUrl: String? = null,
+    val fileName: String? = null,
+    val fileSize: String? = null,
+    val contactName: String? = null,
+    val contactPhone: String? = null,
+    val contactUsername: String? = null,
     val gifUrl: String? = null,
     val stickerEmoji: String? = null,
     val reactions: Map<String, Int> = emptyMap(),

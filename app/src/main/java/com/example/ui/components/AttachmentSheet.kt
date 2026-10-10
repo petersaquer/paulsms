@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Poll
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +50,8 @@ fun AttachmentSheet(
     onSelectPoll: () -> Unit,
     onSelectFile: () -> Unit,
     onSelectContact: () -> Unit = {},
-    onSelectAudio: () -> Unit = {}
+    onSelectAudio: () -> Unit = {},
+    onSelectVideoCamera: () -> Unit = {}
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -69,7 +71,7 @@ fun AttachmentSheet(
                 modifier = Modifier.padding(bottom = 18.dp)
             )
 
-            // Row 1: Camera, Gallery, File, Location
+            // Row 1: Camera, Video, Gallery, File
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -82,6 +84,17 @@ fun AttachmentSheet(
                     onClick = {
                         onDismiss()
                         onSelectCamera()
+                    }
+                )
+
+                AttachmentItem(
+                    title = "Video 🎥",
+                    icon = Icons.Default.Videocam,
+                    color = Color(0xFFD32F2F),
+                    testTag = "attach_video_camera",
+                    onClick = {
+                        onDismiss()
+                        onSelectVideoCamera()
                     }
                 )
 
@@ -106,7 +119,15 @@ fun AttachmentSheet(
                         onSelectFile()
                     }
                 )
+            }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Row 2: Location, Poll, Contact, Audio
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 AttachmentItem(
                     title = "Ubicación",
                     icon = Icons.Default.LocationOn,
@@ -117,15 +138,7 @@ fun AttachmentSheet(
                         onSelectLocation()
                     }
                 )
-            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Row 2: Poll, Contact, Audio, GIF
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
                 AttachmentItem(
                     title = "Encuesta",
                     icon = Icons.Default.Poll,
@@ -158,7 +171,15 @@ fun AttachmentSheet(
                         onSelectAudio()
                     }
                 )
+            }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Row 3: GIFs
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start
+            ) {
                 AttachmentItem(
                     title = "GIFs",
                     icon = Icons.Default.Gif,

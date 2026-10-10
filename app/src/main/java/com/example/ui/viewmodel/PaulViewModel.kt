@@ -350,6 +350,18 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateUserProfile(newDisplayName: String, newBio: String, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.updateUserProfile(newDisplayName, newBio)
+            res.onSuccess {
+                _currentUser.value = _currentUser.value?.copy(displayName = newDisplayName, bio = newBio)
+                onComplete()
+            }.onFailure {
+                onError(it.localizedMessage ?: "Error al actualizar perfil")
+            }
+        }
+    }
+
     fun toggleUserBan(userId: String, isBanned: Boolean, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
         viewModelScope.launch {
             val res = repository.toggleUserBan(userId, isBanned)
@@ -676,8 +688,10 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                     if (cloudMsgs.isNotEmpty()) {
                         _messages.update { currentMap ->
                             val existing = currentMap[chat.id] ?: emptyList()
-                            val existingIds = existing.map { it.id }.toSet()
-                            val merged = existing + cloudMsgs.filterNot { it.id in existingIds }
+                            val cloudMsgIds = cloudMsgs.map { it.id }.toSet()
+                            
+                            // Combine existing (not in cloudMsgs) and all cloudMsgs
+                            val merged = existing.filterNot { it.id in cloudMsgIds } + cloudMsgs
                             currentMap + (chat.id to merged.sortedBy { it.timestamp })
                         }
                     }
@@ -933,6 +947,127 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun sendPhotoMessage(chatId: String, photoUrl: String, caption: String = "") {
+        val targetChat = _chats.value.find { it.id == chatId }
+        val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
+        val time = getCurrentTimeString()
+
+        val newMessage = Message(
+            id = "photo_" + UUID.randomUUID().toString().take(8),
+            chatId = chatId,
+            text = caption.ifBlank { "📷 Foto" },
+            timestamp = time,
+            isOutgoing = true,
+            type = MessageType.PHOTO,
+            photoUrl = photoUrl,
+            isEncrypted = isEncrypted,
+            status = MessageStatus.READ
+        )
+
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to (list + newMessage))
+        }
+
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(lastMessage = "📷 Foto", lastMessageTime = time) else it }
+        }
+
+        repository.syncMessage(chatId, newMessage)
+    }
+
+    fun sendVideoMessage(chatId: String, videoUrl: String, caption: String = "") {
+        val targetChat = _chats.value.find { it.id == chatId }
+        val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
+        val time = getCurrentTimeString()
+
+        val newMessage = Message(
+            id = "video_" + UUID.randomUUID().toString().take(8),
+            chatId = chatId,
+            text = caption.ifBlank { "🎬 Video / Reel" },
+            timestamp = time,
+            isOutgoing = true,
+            type = MessageType.VIDEO,
+            videoUrl = videoUrl,
+            photoUrl = videoUrl,
+            isEncrypted = isEncrypted,
+            status = MessageStatus.READ
+        )
+
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to (list + newMessage))
+        }
+
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(lastMessage = "🎬 Video", lastMessageTime = time) else it }
+        }
+
+        repository.syncMessage(chatId, newMessage)
+    }
+
+    fun sendFileMessage(chatId: String, fileUrl: String, fileName: String, fileSize: String) {
+        val targetChat = _chats.value.find { it.id == chatId }
+        val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
+        val time = getCurrentTimeString()
+
+        val newMessage = Message(
+            id = "file_" + UUID.randomUUID().toString().take(8),
+            chatId = chatId,
+            text = fileName,
+            timestamp = time,
+            isOutgoing = true,
+            type = MessageType.FILE,
+            fileUrl = fileUrl,
+            fileName = fileName,
+            fileSize = fileSize,
+            isEncrypted = isEncrypted,
+            status = MessageStatus.READ
+        )
+
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to (list + newMessage))
+        }
+
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(lastMessage = "📄 $fileName", lastMessageTime = time) else it }
+        }
+
+        repository.syncMessage(chatId, newMessage)
+    }
+
+    fun sendContactMessage(chatId: String, contactName: String, contactPhone: String, contactUsername: String = "") {
+        val targetChat = _chats.value.find { it.id == chatId }
+        val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
+        val time = getCurrentTimeString()
+
+        val newMessage = Message(
+            id = "contact_" + UUID.randomUUID().toString().take(8),
+            chatId = chatId,
+            text = "👤 $contactName",
+            timestamp = time,
+            isOutgoing = true,
+            type = MessageType.CONTACT,
+            contactName = contactName,
+            contactPhone = contactPhone,
+            contactUsername = contactUsername,
+            isEncrypted = isEncrypted,
+            status = MessageStatus.READ
+        )
+
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to (list + newMessage))
+        }
+
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(lastMessage = "👤 Contacto: $contactName", lastMessageTime = time) else it }
+        }
+
+        repository.syncMessage(chatId, newMessage)
+    }
+
     fun sendPoll(chatId: String, question: String, optionTexts: List<String>) {
         val time = getCurrentTimeString()
         val options = optionTexts.mapIndexed { idx, title ->
@@ -977,10 +1112,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun votePoll(messageId: String, optionId: Int) {
+        var updatedChatId: String? = null
+        var updatedMessage: Message? = null
+
         _messages.update { currentMap ->
-            currentMap.mapValues { (_, messageList) ->
+            currentMap.mapValues { (cid, messageList) ->
                 messageList.map { message ->
                     if (message.id == messageId && message.pollData != null) {
+                        updatedChatId = cid
                         val currentPoll = message.pollData
                         val previousVote = currentPoll.userVotedOptionId
 
@@ -996,38 +1135,62 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                         val newVotedOptionId = if (previousVote == optionId) null else optionId
                         val newTotalVotes = newOptions.sumOf { it.voteCount }
 
-                        message.copy(
+                        updatedMessage = message.copy(
                             pollData = currentPoll.copy(
                                 options = newOptions,
                                 totalVotes = newTotalVotes,
                                 userVotedOptionId = newVotedOptionId
                             )
                         )
+                        updatedMessage!!
                     } else {
                         message
                     }
                 }
             }
         }
+
+        updatedChatId?.let { cid ->
+            updatedMessage?.let { msg ->
+                repository.syncMessage(cid, msg)
+            }
+        }
     }
 
     fun addReaction(messageId: String, emoji: String) {
+        var updatedChatId: String? = null
+        var updatedMessage: Message? = null
+
         _messages.update { currentMap ->
-            currentMap.mapValues { (_, messageList) ->
+            currentMap.mapValues { (cid, messageList) ->
                 messageList.map { message ->
                     if (message.id == messageId) {
+                        updatedChatId = cid
                         val currentReactions = message.reactions
                         val count = currentReactions[emoji] ?: 0
-                        val newReactions = if (count > 0) {
+                        val isRemoving = count > 0 && message.userReaction == emoji
+                        
+                        val newReactions = if (isRemoving) {
                             currentReactions - emoji
                         } else {
-                            currentReactions + (emoji to 1)
+                            currentReactions + (emoji to (count + 1))
                         }
-                        message.copy(reactions = newReactions)
+                        
+                        updatedMessage = message.copy(
+                            reactions = newReactions,
+                            userReaction = if (isRemoving) null else emoji
+                        )
+                        updatedMessage!!
                     } else {
                         message
                     }
                 }
+            }
+        }
+
+        updatedChatId?.let { cid ->
+            updatedMessage?.let { msg ->
+                repository.syncMessage(cid, msg)
             }
         }
     }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -190,21 +191,61 @@ fun LocationPickerSheet(
                 }
             }
 
-            // Map Preview Canvas
+            // Map Preview WebView
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(130.dp)
+                    .height(200.dp)
                     .background(Color(0xFFE8ECEF))
             ) {
-                MapCanvasPreview(isLive = isLiveModeSelected)
+                if (currentLocationData != null) {
+                    val lat = currentLocationData!!.latitude
+                    val lng = currentLocationData!!.longitude
+                    val htmlContent = """
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+                            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+                            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                            <style>
+                                body, html, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: #f3efe7; }
+                            </style>
+                        </head>
+                        <body>
+                            <div id="map"></div>
+                            <script>
+                                var map = L.map('map', {zoomControl: false}).setView([$lat, $lng], 15);
+                                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                                L.marker([$lat, $lng]).addTo(map);
+                            </script>
+                        </body>
+                        </html>
+                    """.trimIndent()
+
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { ctx ->
+                            android.webkit.WebView(ctx).apply {
+                                webViewClient = android.webkit.WebViewClient()
+                                settings.javaScriptEnabled = true
+                                loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { webView ->
+                            // Optional: update coordinates if they change significantly
+                        }
+                    )
+                } else {
+                    MapCanvasPreview(isLive = isLiveModeSelected)
+                }
 
                 if (isLoadingLocation) {
                     Box(
-                        modifier = Modifier.fillMaxWidth().height(130.dp),
+                        modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black.copy(alpha = 0.1f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(28.dp), color = TelegramBlue, strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp), color = TelegramBlue, strokeWidth = 3.dp)
                     }
                 }
             }

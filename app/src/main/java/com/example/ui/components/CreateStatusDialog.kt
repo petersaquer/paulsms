@@ -126,6 +126,14 @@ fun CreateStatusDialog(
     var captionText by remember { mutableStateOf("") }
     var isReelMode by remember { mutableStateOf(initialType == StatusType.REEL) }
 
+    val statusMediaLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            selectedMediaUrl = uri.toString()
+        }
+    }
+
     // Privacy state
     var privacy by remember { mutableStateOf(StatusPrivacy.MY_CONTACTS) }
     var excludedIds by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -370,12 +378,35 @@ fun CreateStatusDialog(
                                 }
                             }
 
-                            // Preset Media Selector
+                            // Gallery Picker Button
+                            Button(
+                                onClick = {
+                                    statusMediaLauncher.launch(
+                                        androidx.activity.result.PickVisualMediaRequest(
+                                            if (isReelMode) androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.VideoOnly
+                                            else androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                                        )
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .testTag("pick_device_media_for_status")
+                            ) {
+                                Icon(Icons.Default.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("📱 Subir desde la Galería de mi Dispositivo", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
                             Text(
-                                text = "Elige contenido visual o Reel:",
+                                text = "O selecciona una de las plantillas destacadas:",
                                 color = Color.White.copy(alpha = 0.7f),
                                 fontSize = 12.sp,
-                                modifier = Modifier.padding(vertical = 4.dp)
+                                modifier = Modifier.padding(vertical = 2.dp)
                             )
 
                             Row(

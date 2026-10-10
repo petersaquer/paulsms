@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -66,6 +67,9 @@ fun MessageBubble(
     onReaction: (Message, String) -> Unit,
     onVotePoll: (String, Int) -> Unit,
     onOpenViewOnce: (Message) -> Unit = {},
+    onOpenMap: (com.example.data.model.LocationData) -> Unit = {},
+    onOpenMedia: (url: String, isVideo: Boolean, caption: String?) -> Unit = { _, _, _ -> },
+    onOpenContact: (name: String, phone: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var showReactionsPicker by remember { mutableStateOf(false) }
@@ -236,6 +240,147 @@ fun MessageBubble(
                         }
                     } else {
                         when (message.type) {
+                            MessageType.PHOTO -> {
+                                val url = message.photoUrl ?: ""
+                                Column(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { if (url.isNotBlank()) onOpenMedia(url, false, message.text) }
+                                ) {
+                                    coil.compose.AsyncImage(
+                                        model = url,
+                                        contentDescription = "Foto",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                    if (message.text.isNotBlank()) {
+                                        Text(
+                                            text = message.text,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.padding(top = 4.dp, start = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            MessageType.VIDEO -> {
+                                val url = message.videoUrl ?: message.photoUrl ?: ""
+                                Column(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { if (url.isNotBlank()) onOpenMedia(url, true, message.text) }
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color.Black),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        coil.compose.AsyncImage(
+                                            model = url,
+                                            contentDescription = "Video preview",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(50.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.6f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("▶", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (message.text.isNotBlank()) {
+                                        Text(
+                                            text = message.text,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.padding(top = 4.dp, start = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            MessageType.FILE -> {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .padding(10.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(TelegramBlue),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("📄", fontSize = 20.sp)
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = message.fileName ?: message.text.ifBlank { "Archivo adjunto" },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = message.fileSize ?: "Documento",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                            MessageType.CONTACT -> {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .clickable {
+                                            onOpenContact(
+                                                message.contactName ?: "Contacto",
+                                                message.contactPhone ?: ""
+                                            )
+                                        }
+                                        .padding(12.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .clip(CircleShape)
+                                                .background(TelegramAccent),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("👤", fontSize = 22.sp)
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = message.contactName ?: "Contacto compartido",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (!message.contactPhone.isNullOrBlank()) {
+                                                Text(
+                                                    text = message.contactPhone,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             MessageType.VOICE -> {
                                 VoicePlayer(
                                     durationSeconds = message.voiceDurationSeconds ?: 12,
@@ -270,7 +415,8 @@ fun MessageBubble(
                                 message.locationData?.let { loc ->
                                     LocationMessageWidget(
                                         location = loc,
-                                        isOutgoing = message.isOutgoing
+                                        isOutgoing = message.isOutgoing,
+                                        onClick = { onOpenMap(loc) }
                                     )
                                 }
                             }

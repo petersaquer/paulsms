@@ -463,6 +463,22 @@ class FirebaseChatRepository(private val context: Context) {
         }
     }
 
+    suspend fun updateUserProfile(newDisplayName: String, newBio: String): Result<Unit> {
+        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        return try {
+            val updates = mapOf(
+                "displayName" to newDisplayName.trim(),
+                "bio" to newBio.trim(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("users").document(current.userId).update(updates).await()
+            activeUser = current.copy(displayName = newDisplayName.trim(), bio = newBio.trim())
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     /**
      * Admin/Moderator: Ban or Unban a user
      */

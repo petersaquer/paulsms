@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -148,6 +149,17 @@ fun StatusViewerScreen(
                         }
                     }
                 )
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    if (dragAmount.y < -50) { // Swipe up
+                        change.consume()
+                        onClose()
+                    } else if (dragAmount.y > 50) { // Swipe down
+                        change.consume()
+                        onClose()
+                    }
+                }
             }
     ) {
         // CONTENT DISPLAY
