@@ -1,5 +1,10 @@
 package com.example.ui.components
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -19,35 +24,37 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GpsFixed
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,21 +63,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.example.data.RealLocationHelper
 import com.example.data.model.LocationData
-import com.example.ui.theme.TelegramAccent
 import com.example.ui.theme.TelegramBlue
-
-data class NearbyPlace(
-    val name: String,
-    val address: String,
-    val distance: String,
-    val lat: Double,
-    val lng: Double
-)
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,16 +80,63 @@ fun LocationPickerSheet(
     onDismiss: () -> Unit,
     onSendLocation: (LocationData) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val locationHelper = remember { RealLocationHelper(context) }
+
     var isLiveModeSelected by remember { mutableStateOf(false) }
     var selectedDurationMinutes by remember { mutableIntStateOf(15) }
 
-    val nearbyPlaces = remember {
-        listOf(
-            NearbyPlace("Plaza Mayor", "Calle Mayor, s/n, Madrid", "Ubicación actual", 40.415363, -3.707398),
-            NearbyPlace("Parque del Retiro", "Plaza de la Independencia, 7", "a 350 m", 40.415260, -3.684499),
-            NearbyPlace("Cafetería Paul & Books", "Calle del Arenal, 14", "a 80 m", 40.416820, -3.707100),
-            NearbyPlace("Estación de Metro Sol", "Puerta del Sol", "a 150 m", 40.416900, -3.703500)
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         )
+    }
+
+    var isLoadingLocation by remember { mutableStateOf(true) }
+    var currentLocationData by remember {
+        mutableStateOf<LocationData?>(null)
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        hasLocationPermission = granted
+        if (granted) {
+            scope.launch {
+                isLoadingLocation = true
+                currentLocationData = locationHelper.getCurrentLocation()
+                isLoadingLocation = false
+            }
+        } else {
+            isLoadingLocation = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasLocationPermission) {
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        } else {
+            scope.launch {
+                isLoadingLocation = true
+                currentLocationData = locationHelper.getCurrentLocation()
+                isLoadingLocation = false
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            locationHelper.stopLiveLocationUpdates()
+        }
     }
 
     ModalBottomSheet(
@@ -115,41 +164,99 @@ fun LocationPickerSheet(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Compartir Ubicación",
+                    text = "Ubicación en Tiempo Real (GPS Real)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                Spacer(modifier = Modifier.weight(1f))
+                if (hasLocationPermission) {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                isLoadingLocation = true
+                                currentLocationData = locationHelper.getCurrentLocation()
+                                isLoadingLocation = false
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Actualizar GPS",
+                            tint = TelegramBlue,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
 
             // Map Preview Canvas
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp)
+                    .height(130.dp)
                     .background(Color(0xFFE8ECEF))
             ) {
                 MapCanvasPreview(isLive = isLiveModeSelected)
+
+                if (isLoadingLocation) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(130.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp), color = TelegramBlue, strokeWidth = 2.dp)
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Option 1: Send current static location
+            if (!hasLocationPermission) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Se requiere permiso de ubicación",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFE65100),
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            text = "Para enviar tu posición satelital real por GPS debes conceder el permiso de Android.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFBF360C)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                permissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100))
+                        ) {
+                            Text("Conceder Permiso GPS")
+                        }
+                    }
+                }
+            }
+
+            // Option 1: Send current real static location
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .clickable(enabled = !isLoadingLocation && currentLocationData != null) {
+                        val loc = currentLocationData ?: return@clickable
                         onDismiss()
-                        onSendLocation(
-                            LocationData(
-                                latitude = 40.416775,
-                                longitude = -3.703790,
-                                title = "Ubicación actual",
-                                address = "Plaza Mayor, 28012 Madrid, España",
-                                isLive = false,
-                                accuracyMeters = 8.5f
-                            )
-                        )
+                        onSendLocation(loc.copy(isLive = false))
                     }
                     .padding(horizontal = 16.dp, vertical = 12.dp)
                     .testTag("send_current_location_button"),
@@ -178,9 +285,19 @@ fun LocationPickerSheet(
                         color = TelegramBlue
                     )
                     Text(
-                        text = "Precisión de 8.5 metros • Madrid, España",
+                        text = if (isLoadingLocation) {
+                            "Obteniendo coordenadas GPS reales del dispositivo..."
+                        } else {
+                            val loc = currentLocationData
+                            if (loc != null) {
+                                "${loc.title} • Precisión ±${loc.accuracyMeters.toInt()}m\n${loc.address}"
+                            } else {
+                                "Coordenadas GPS no disponibles"
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
                     )
                 }
             }
@@ -219,7 +336,7 @@ fun LocationPickerSheet(
                         color = Color(0xFF00C853)
                     )
                     Text(
-                        text = "Actualiza tu movimiento en directo con este chat",
+                        text = "Transmite tus movimientos satelitales en directo mientras te desplazas",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -237,7 +354,7 @@ fun LocationPickerSheet(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "Selecciona la duración del directo:",
+                            text = "Selecciona la duración de transmisión en directo:",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1B5E20)
@@ -263,17 +380,19 @@ fun LocationPickerSheet(
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
+                                val loc = currentLocationData ?: LocationData(
+                                    latitude = 0.0,
+                                    longitude = 0.0,
+                                    title = "Ubicación en tiempo real",
+                                    address = "Transmitiendo en directo por satélite",
+                                    isLive = true
+                                )
                                 onDismiss()
                                 onSendLocation(
-                                    LocationData(
-                                        latitude = 40.416775,
-                                        longitude = -3.703790,
-                                        title = "Ubicación en tiempo real",
-                                        address = "Compartiendo en directo mientras te mueves",
+                                    loc.copy(
                                         isLive = true,
                                         liveDurationMinutes = selectedDurationMinutes,
                                         remainingMinutes = selectedDurationMinutes,
-                                        accuracyMeters = 5.0f,
                                         isMoving = true
                                     )
                                 )
@@ -285,60 +404,6 @@ fun LocationPickerSheet(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Iniciar transmisión en tiempo real")
                         }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Nearby Places Section
-            Text(
-                text = "LUGARES CERCANOS",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
-
-            nearbyPlaces.forEach { place ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            onDismiss()
-                            onSendLocation(
-                                LocationData(
-                                    latitude = place.lat,
-                                    longitude = place.lng,
-                                    title = place.name,
-                                    address = place.address,
-                                    isLive = false
-                                )
-                            )
-                        }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Place,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = place.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "${place.distance} • ${place.address}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
-                        )
                     }
                 }
             }
@@ -371,7 +436,7 @@ fun MapCanvasPreview(
         label = "radar_alpha"
     )
 
-    Canvas(modifier = modifier.fillMaxWidth().height(140.dp)) {
+    Canvas(modifier = modifier.fillMaxWidth().height(130.dp)) {
         val w = size.width
         val h = size.height
 
@@ -408,12 +473,6 @@ fun MapCanvasPreview(
             end = Offset(w * 0.42f, h),
             strokeWidth = 12f
         )
-        drawLine(
-            color = Color.White,
-            start = Offset(0f, h * 0.2f),
-            end = Offset(w, h * 0.65f),
-            strokeWidth = 8f
-        )
 
         // Center Pin position
         val center = Offset(w * 0.42f, h * 0.45f)
@@ -425,13 +484,11 @@ fun MapCanvasPreview(
                 radius = 45f * radiusRatio,
                 center = center
             )
-            // Accuracy radius
             drawCircle(
                 color = Color(0xFF00C853).copy(alpha = 0.25f),
                 radius = 28f,
                 center = center
             )
-            // Center beacon dot
             drawCircle(
                 color = Color.White,
                 radius = 12f,
@@ -443,7 +500,6 @@ fun MapCanvasPreview(
                 center = center
             )
         } else {
-            // Static Location Pin
             drawCircle(
                 color = Color(0x33000000),
                 radius = 14f,

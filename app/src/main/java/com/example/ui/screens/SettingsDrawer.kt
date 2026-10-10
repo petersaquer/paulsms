@@ -62,6 +62,7 @@ fun SettingsDrawer(
     onOpenSavedMessages: () -> Unit,
     onNewGroup: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAdminPanel: () -> Unit = {},
     onCloseDrawer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -219,6 +220,18 @@ fun SettingsDrawer(
                     onOpenSettings()
                 }
             )
+
+            if (user?.isAdmin == true || user?.isModerator == true) {
+                DrawerMenuItem(
+                    title = "Panel de Administración 👑",
+                    icon = Icons.Default.Security,
+                    badge = if (user.isAdmin) "Admin" else "Mod",
+                    onClick = {
+                        onCloseDrawer()
+                        onOpenAdminPanel()
+                    }
+                )
+            }
 
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 8.dp),

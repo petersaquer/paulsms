@@ -6,12 +6,16 @@
         "userId": { "type": "string" },
         "displayName": { "type": "string" },
         "username": { "type": "string" },
+        "email": { "type": "string" },
         "phoneNumber": { "type": "string" },
         "bio": { "type": "string" },
+        "role": { "type": "string" },
+        "isBanned": { "type": "boolean" },
+        "isBlocked": { "type": "boolean" },
         "avatarGradientStart": { "type": "number" },
         "avatarGradientEnd": { "type": "number" },
         "isOnline": { "type": "boolean" },
-        "createdAt": { "type": "timestamp" },
+        "createdAt": { "type": "number" },
         "updatedAt": { "type": "timestamp" }
       }
     },

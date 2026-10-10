@@ -2,11 +2,11 @@ package com.example.ui.viewmodel
 
 import android.app.Activity
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.Chat
 import com.example.data.model.ChatType
+import com.example.data.model.DeviceContact
 import com.example.data.model.LocationData
 import com.example.data.model.Message
 import com.example.data.model.MessageStatus
@@ -19,8 +19,10 @@ import com.example.data.sample.SampleData
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -40,16 +42,18 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FirebaseChatRepository(application.applicationContext)
 
-    private val _currentUser = MutableStateFlow<User?>(repository.currentUser ?: SampleData.currentUser)
+    private val _currentUser = MutableStateFlow<User?>(repository.activeUser)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
     private val _isFirebaseSignedIn = MutableStateFlow(repository.isUserSignedIn())
     val isFirebaseSignedIn: StateFlow<Boolean> = _isFirebaseSignedIn.asStateFlow()
 
-    private val _chats = MutableStateFlow<List<Chat>>(SampleData.initialChats())
+    private val _chats = MutableStateFlow<List<Chat>>(
+        repository.activeUser?.let { listOf(SampleData.createSavedMessagesChat(it)) } ?: emptyList()
+    )
     val chats: StateFlow<List<Chat>> = _chats.asStateFlow()
 
-    private val _messages = MutableStateFlow<Map<String, List<Message>>>(SampleData.initialMessages())
+    private val _messages = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
     val messages: StateFlow<Map<String, List<Message>>> = _messages.asStateFlow()
 
     private val _selectedChat = MutableStateFlow<Chat?>(null)
@@ -97,12 +101,83 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     private val _accountSelfDestructPeriod = MutableStateFlow("6 meses")
     val accountSelfDestructPeriod: StateFlow<String> = _accountSelfDestructPeriod.asStateFlow()
 
+    // Real list of all users for the Admin Panel
+    val allUsers: StateFlow<List<User>> = repository.observeAllUsers()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = emptyList()
+        )
+
+    private val _registeredCount = MutableStateFlow(0)
+    val registeredCount: StateFlow<Int> = _registeredCount.asStateFlow()
+
     init {
         viewModelScope.launch {
-            repository.seedDemoFirebaseUsers()
+            _registeredCount.value = repository.getRegisteredUsersCount()
             _isFirebaseSignedIn.value = repository.isUserSignedIn()
             if (repository.isUserSignedIn()) {
-                _currentUser.value = repository.currentUser
+                val user = repository.currentUser
+                _currentUser.value = user
+                if (user != null && _chats.value.isEmpty()) {
+                    _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                }
+            }
+        }
+    }
+
+    suspend fun getRegisteredUsersCount(): Int {
+        val count = repository.getRegisteredUsersCount()
+        _registeredCount.value = count
+        return count
+    }
+
+    /**
+     * Account Registration:
+     * The first registered user is automatically ADMIN!
+     */
+    fun registerUser(
+        fullName: String,
+        username: String,
+        email: String,
+        pass: String,
+        phone: String,
+        bio: String,
+        onComplete: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = repository.registerUser(fullName, username, email, pass, phone, bio)
+            res.onSuccess { user ->
+                _currentUser.value = user
+                _isFirebaseSignedIn.value = true
+                _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                _registeredCount.value = repository.getRegisteredUsersCount()
+                onComplete()
+            }.onFailure {
+                onError(it.localizedMessage ?: "Error al registrar cuenta")
+            }
+        }
+    }
+
+    /**
+     * Account Login with Username/Email and Password
+     */
+    fun loginUser(
+        identifier: String,
+        pass: String,
+        onComplete: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = repository.loginUser(identifier, pass)
+            res.onSuccess { user ->
+                _currentUser.value = user
+                _isFirebaseSignedIn.value = true
+                _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                onComplete()
+            }.onFailure {
+                onError(it.localizedMessage ?: "Error al iniciar sesión")
             }
         }
     }
@@ -110,9 +185,10 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     fun signInWithGoogle(activity: Activity, onComplete: () -> Unit, onError: (String) -> Unit) {
         repository.onGoogleSignInClicked(
             activity = activity,
-            onAuthSuccess = {
+            onAuthSuccess = { user ->
                 _isFirebaseSignedIn.value = true
-                _currentUser.value = repository.currentUser
+                _currentUser.value = user
+                _chats.value = listOf(SampleData.createSavedMessagesChat(user))
                 onComplete()
             },
             onAuthError = onError,
@@ -123,9 +199,53 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     fun signOut(onComplete: () -> Unit) {
         repository.signOut(viewModelScope) {
             _isFirebaseSignedIn.value = false
-            _currentUser.value = SampleData.currentUser
+            _currentUser.value = null
+            _chats.value = emptyList()
+            _messages.value = emptyMap()
+            _selectedChat.value = null
             onComplete()
         }
+    }
+
+    // Admin Panel Methods
+    fun updateUserRole(userId: String, newRole: String, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.updateUserRole(userId, newRole)
+            res.onSuccess {
+                if (_currentUser.value?.userId == userId) {
+                    _currentUser.value = _currentUser.value?.copy(role = newRole)
+                }
+                onComplete()
+            }.onFailure {
+                onError(it.localizedMessage ?: "Error al cambiar rol")
+            }
+        }
+    }
+
+    fun toggleUserBan(userId: String, isBanned: Boolean, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.toggleUserBan(userId, isBanned)
+            res.onSuccess {
+                onComplete()
+            }.onFailure {
+                onError(it.localizedMessage ?: "Error al suspender/desbloquear usuario")
+            }
+        }
+    }
+
+    fun deleteUserAccount(userId: String, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.deleteUserAccount(userId)
+            res.onSuccess {
+                onComplete()
+            }.onFailure {
+                onError(it.localizedMessage ?: "Error al eliminar usuario")
+            }
+        }
+    }
+
+    fun getDeviceContacts(): List<DeviceContact> {
+        return repository.contactsHelper.readDeviceContacts()
     }
 
     suspend fun searchUserInFirebase(query: String): User? {
@@ -136,15 +256,15 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         val newId = "contact_" + UUID.randomUUID().toString().take(6)
         val currentUid = _currentUser.value?.userId ?: "local_user"
         val partnerId = if (isFirebase) username.ifEmpty { phone } else "e2ee_$newId"
-        val fingerprint = if (!isFirebase) repository.generateE2EEFingerprint(currentUid, partnerId) else null
+        val fingerprint = if (!isFirebase) "SHA-256 #${newId.uppercase().take(8)}" else null
 
         val newChat = Chat(
             id = newId,
             title = title,
-            subtitle = if (isFirebase) "en línea • Firebase Cloud" else "🔒 Chat Secreto E2EE",
+            subtitle = if (isFirebase) "en línea • Paul Cloud" else "🔒 Chat Secreto E2EE",
             username = username,
             type = if (isFirebase) ChatType.DIRECT else ChatType.SECRET,
-            lastMessage = if (isFirebase) "Chat de Firebase Cloud iniciado" else "🔒 Chat Secreto iniciado con cifrado E2EE",
+            lastMessage = if (isFirebase) "Chat iniciado vía Paul Cloud" else "🔒 Chat Secreto iniciado con cifrado E2EE",
             lastMessageTime = getCurrentTimeString(),
             unreadCount = 0,
             isOnline = isFirebase,
@@ -160,7 +280,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             id = "msg_" + UUID.randomUUID().toString().take(6),
             chatId = newId,
             text = if (isFirebase) {
-                "✨ Has iniciado una conversación con $title conectada a Firebase Cloud Database."
+                "✨ Has iniciado una conversación con $title conectada a Paul Cloud Database."
             } else {
                 "🔒 Chat Secreto activado con cifrado de extremo a extremo.\n• Las claves nunca salen de este dispositivo\n• Sin almacenamiento en la nube\n• Huella criptográfica: ${fingerprint ?: "#D4A8"}"
             },
@@ -171,7 +291,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             status = MessageStatus.READ
         )
 
-        _chats.update { listOf(newChat) + it }
+        _chats.update { listOf(newChat) + it.filterNot { c -> c.id == newId } }
         _messages.update { it + (newId to listOf(initialWelcomeMessage)) }
 
         selectChat(newChat)
@@ -228,8 +348,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         if (targetChat?.isBlocked == true) return
 
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
-
         val time = getCurrentTimeString()
+        val replying = _replyingMessage.value
+
         val newMessage = Message(
             id = "msg_" + UUID.randomUUID().toString().take(8),
             chatId = chatId,
@@ -237,75 +358,94 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             timestamp = time,
             isOutgoing = true,
             isEncrypted = isEncrypted,
+            replyTo = replying,
             isViewOnce = isViewOnce,
             hasBeenViewed = false,
-            status = MessageStatus.READ,
-            replyTo = _replyingMessage.value
+            status = MessageStatus.SENT
         )
-
-        _replyingMessage.value = null
 
         _messages.update { currentMap ->
             val chatMessages = currentMap[chatId] ?: emptyList()
             currentMap + (chatId to (chatMessages + newMessage))
         }
 
-        val displayLastMessage = if (isViewOnce) "🔒 Mensaje de lectura única (1)" else trimmed
         _chats.update { list ->
             list.map {
                 if (it.id == chatId) {
                     it.copy(
-                        lastMessage = displayLastMessage,
+                        lastMessage = if (isViewOnce) "🔒 Mensaje de lectura única" else trimmed,
                         lastMessageTime = time
                     )
                 } else it
             }
         }
 
-        // Auto replies for interactive contacts/bot
-        if (chatId == "paul_bot") {
-            handleBotResponse(trimmed)
-        } else if (chatId == "elena" || (targetChat != null && !targetChat.isCloudSynced && targetChat.type == ChatType.SECRET)) {
-            handleContactAutoReply(chatId, targetChat?.title ?: "Contacto", isEncrypted)
+        _replyingMessage.value = null
+
+        viewModelScope.launch {
+            delay(500)
+            _messages.update { currentMap ->
+                val chatMessages = currentMap[chatId] ?: emptyList()
+                currentMap + (chatId to chatMessages.map {
+                    if (it.id == newMessage.id) it.copy(status = MessageStatus.READ) else it
+                })
+            }
         }
     }
 
     fun markMessageAsViewed(chatId: String, messageId: String) {
         _messages.update { currentMap ->
             val chatMessages = currentMap[chatId] ?: emptyList()
-            val updated = chatMessages.map { msg ->
-                if (msg.id == messageId) {
-                    msg.copy(hasBeenViewed = true, text = "💥 [Mensaje autodestruido]")
+            currentMap + (chatId to chatMessages.map { msg ->
+                if (msg.id == messageId && msg.isViewOnce) {
+                    msg.copy(hasBeenViewed = true)
                 } else msg
-            }
-            currentMap + (chatId to updated)
+            })
         }
-        _chats.update { list ->
-            list.map {
-                if (it.id == chatId && it.lastMessage.contains("lectura única", ignoreCase = true)) {
-                    it.copy(lastMessage = "💥 Mensaje de lectura única expirado")
-                } else it
+    }
+
+    fun startVoiceRecording() {
+        if (_isRecordingVoice.value) return
+        _isRecordingVoice.value = true
+        _recordingSeconds.value = 0
+        recordingTimerJob?.cancel()
+        recordingTimerJob = viewModelScope.launch {
+            while (_isRecordingVoice.value) {
+                delay(1000)
+                _recordingSeconds.update { it + 1 }
             }
+        }
+    }
+
+    fun cancelVoiceRecording() {
+        _isRecordingVoice.value = false
+        _recordingSeconds.value = 0
+        recordingTimerJob?.cancel()
+    }
+
+    fun stopVoiceRecordingAndSend(chatId: String) {
+        val seconds = _recordingSeconds.value
+        cancelVoiceRecording()
+        if (seconds >= 1) {
+            sendVoiceMessage(chatId, seconds)
         }
     }
 
     fun sendVoiceMessage(chatId: String, durationSeconds: Int) {
         val targetChat = _chats.value.find { it.id == chatId }
-        val isEncrypted = targetChat?.isEncrypted ?: false
-
+        val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
-        val waveform = List(16) { ((it * 3 + 2) % 10 + 2) / 12f }
+        val durationFormatted = "%d:%02d".format(durationSeconds / 60, durationSeconds % 60)
         val newMessage = Message(
             id = "voice_" + UUID.randomUUID().toString().take(8),
             chatId = chatId,
-            text = "Mensaje de voz",
+            text = "🎤 Mensaje de voz ($durationFormatted)",
             timestamp = time,
             isOutgoing = true,
             type = MessageType.VOICE,
+            voiceDurationSeconds = durationSeconds,
             isEncrypted = isEncrypted,
-            voiceDurationSeconds = durationSeconds.coerceAtLeast(1),
-            voiceWaveform = waveform,
-            status = MessageStatus.READ
+            status = MessageStatus.SENT
         )
 
         _messages.update { currentMap ->
@@ -317,26 +457,22 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             list.map {
                 if (it.id == chatId) {
                     it.copy(
-                        lastMessage = "🎤 Mensaje de voz (0:${if (durationSeconds < 10) "0$durationSeconds" else "$durationSeconds"})",
+                        lastMessage = "🎤 Mensaje de voz ($durationFormatted)",
                         lastMessageTime = time
                     )
                 } else it
             }
         }
-
-        if (chatId == "paul_bot") {
-            handleBotResponse("audio")
-        }
     }
 
-    fun sendGifMessage(chatId: String, title: String, gifUrl: String) {
+    fun sendGifMessage(chatId: String, gifTitle: String, gifUrl: String) {
         val targetChat = _chats.value.find { it.id == chatId }
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
         val newMessage = Message(
             id = "gif_" + UUID.randomUUID().toString().take(8),
             chatId = chatId,
-            text = title,
+            text = "GIF: $gifTitle",
             timestamp = time,
             isOutgoing = true,
             type = MessageType.GIF,
@@ -354,7 +490,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             list.map {
                 if (it.id == chatId) {
                     it.copy(
-                        lastMessage = "GIF: $title",
+                        lastMessage = "GIF",
                         lastMessageTime = time
                     )
                 } else it
@@ -367,8 +503,10 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
         val isLive = location.isLive
+        val msgId = "loc_" + UUID.randomUUID().toString().take(8)
+
         val newMessage = Message(
-            id = "loc_" + UUID.randomUUID().toString().take(8),
+            id = msgId,
             chatId = chatId,
             text = if (isLive) "📍 Ubicación en tiempo real" else "📍 ${location.title}",
             timestamp = time,
@@ -394,6 +532,18 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 } else it
             }
         }
+
+        // If live location, start real background GPS tracking!
+        if (isLive) {
+            repository.locationHelper.startLiveLocationUpdates(location.liveDurationMinutes) { updatedLoc ->
+                _messages.update { map ->
+                    val msgs = map[chatId] ?: emptyList()
+                    map + (chatId to msgs.map { m ->
+                        if (m.id == msgId) m.copy(locationData = updatedLoc) else m
+                    })
+                }
+            }
+        }
     }
 
     fun sendPoll(chatId: String, question: String, optionTexts: List<String>) {
@@ -409,11 +559,10 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             userVotedOptionId = null,
             isAnonymous = true
         )
-
         val newMessage = Message(
-            id = "msg_" + UUID.randomUUID().toString().take(8),
+            id = "poll_msg_" + UUID.randomUUID().toString().take(8),
             chatId = chatId,
-            text = "Encuesta: $question",
+            text = "📊 Encuesta: $question",
             timestamp = time,
             isOutgoing = true,
             type = MessageType.POLL,
@@ -441,40 +590,33 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     fun votePoll(messageId: String, optionId: Int) {
         _messages.update { currentMap ->
             currentMap.mapValues { (_, messageList) ->
-                messageList.map { msg ->
-                    if (msg.id == messageId && msg.pollData != null) {
-                        val currentPoll = msg.pollData
+                messageList.map { message ->
+                    if (message.id == messageId && message.pollData != null) {
+                        val currentPoll = message.pollData
                         val previousVote = currentPoll.userVotedOptionId
-                        if (previousVote == optionId) {
-                            val newOptions = currentPoll.options.map { opt ->
-                                if (opt.id == optionId) opt.copy(voteCount = (opt.voteCount - 1).coerceAtLeast(0))
-                                else opt
+
+                        val newOptions = currentPoll.options.map { opt ->
+                            when {
+                                opt.id == optionId && previousVote == optionId -> opt.copy(voteCount = (opt.voteCount - 1).coerceAtLeast(0))
+                                opt.id == optionId -> opt.copy(voteCount = opt.voteCount + 1)
+                                opt.id == previousVote -> opt.copy(voteCount = (opt.voteCount - 1).coerceAtLeast(0))
+                                else -> opt
                             }
-                            msg.copy(
-                                pollData = currentPoll.copy(
-                                    options = newOptions,
-                                    totalVotes = (currentPoll.totalVotes - 1).coerceAtLeast(0),
-                                    userVotedOptionId = null
-                                )
-                            )
-                        } else {
-                            val newOptions = currentPoll.options.map { opt ->
-                                when (opt.id) {
-                                    optionId -> opt.copy(voteCount = opt.voteCount + 1)
-                                    previousVote -> opt.copy(voteCount = (opt.voteCount - 1).coerceAtLeast(0))
-                                    else -> opt
-                                }
-                            }
-                            val voteDelta = if (previousVote == null) 1 else 0
-                            msg.copy(
-                                pollData = currentPoll.copy(
-                                    options = newOptions,
-                                    totalVotes = currentPoll.totalVotes + voteDelta,
-                                    userVotedOptionId = optionId
-                                )
-                            )
                         }
-                    } else msg
+
+                        val newVotedOptionId = if (previousVote == optionId) null else optionId
+                        val newTotalVotes = newOptions.sumOf { it.voteCount }
+
+                        message.copy(
+                            pollData = currentPoll.copy(
+                                options = newOptions,
+                                totalVotes = newTotalVotes,
+                                userVotedOptionId = newVotedOptionId
+                            )
+                        )
+                    } else {
+                        message
+                    }
                 }
             }
         }
@@ -482,41 +624,66 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addReaction(messageId: String, emoji: String) {
         _messages.update { currentMap ->
-            currentMap.mapValues { (_, msgList) ->
-                msgList.map { msg ->
-                    if (msg.id == messageId) {
-                        val currentReactions = msg.reactions.toMutableMap()
-                        val previous = msg.userReaction
-                        if (previous == emoji) {
-                            val count = (currentReactions[emoji] ?: 1) - 1
-                            if (count <= 0) currentReactions.remove(emoji)
-                            else currentReactions[emoji] = count
-                            msg.copy(reactions = currentReactions, userReaction = null)
+            currentMap.mapValues { (_, messageList) ->
+                messageList.map { message ->
+                    if (message.id == messageId) {
+                        val currentReactions = message.reactions
+                        val count = currentReactions[emoji] ?: 0
+                        val newReactions = if (count > 0) {
+                            currentReactions - emoji
                         } else {
-                            if (previous != null) {
-                                val prevCount = (currentReactions[previous] ?: 1) - 1
-                                if (prevCount <= 0) currentReactions.remove(previous)
-                                else currentReactions[previous] = prevCount
-                            }
-                            currentReactions[emoji] = (currentReactions[emoji] ?: 0) + 1
-                            msg.copy(reactions = currentReactions, userReaction = emoji)
+                            currentReactions + (emoji to 1)
                         }
-                    } else msg
+                        message.copy(reactions = newReactions)
+                    } else {
+                        message
+                    }
                 }
+            }
+        }
+    }
+
+    fun toggleMuteChat(chatId: String) {
+        _chats.update { list ->
+            list.map {
+                if (it.id == chatId) {
+                    it.copy(isMuted = !it.isMuted)
+                } else it
             }
         }
     }
 
     fun togglePinChat(chatId: String) {
         _chats.update { list ->
-            list.map { if (it.id == chatId) it.copy(isPinned = !it.isPinned) else it }
+            list.map {
+                if (it.id == chatId) {
+                    it.copy(isPinned = !it.isPinned)
+                } else it
+            }
         }
     }
 
-    fun toggleMuteChat(chatId: String) {
-        _chats.update { list ->
-            list.map { if (it.id == chatId) it.copy(isMuted = !it.isMuted) else it }
-        }
+    fun createNewChat(title: String, type: ChatType, description: String) {
+        val newId = "chat_" + UUID.randomUUID().toString().take(6)
+        val time = getCurrentTimeString()
+        val newChat = Chat(
+            id = newId,
+            title = title,
+            subtitle = if (type == ChatType.CHANNEL) "Canal público" else "Grupo • 1 miembro",
+            username = "@" + title.lowercase().replace(" ", "_"),
+            type = type,
+            lastMessage = if (type == ChatType.CHANNEL) "Canal creado" else "Grupo creado",
+            lastMessageTime = time,
+            unreadCount = 0,
+            isOnline = false,
+            pinnedMessageText = if (description.isNotBlank()) description else null,
+            avatarGradientStart = 0xFF7B1FA2L,
+            avatarGradientEnd = 0xFF512DA8L
+        )
+
+        _chats.update { listOf(newChat) + it }
+        _messages.update { it + (newId to emptyList()) }
+        selectChat(newChat)
     }
 
     fun deleteChat(chatId: String) {
@@ -531,253 +698,61 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         _chats.update { list ->
             list.map {
                 if (it.id == chatId) {
-                    val newBlocked = !it.isBlocked
-                    it.copy(
-                        isBlocked = newBlocked,
-                        subtitle = if (newBlocked) "🚫 Bloqueado" else if (it.type == ChatType.BOT) "bot" else if (it.isOnline) "en línea" else "última vez recientemente"
-                    )
+                    it.copy(isBlocked = !it.isBlocked)
                 } else it
             }
         }
-        _selectedChat.update { current ->
-            if (current?.id == chatId) {
-                val newBlocked = !current.isBlocked
-                current.copy(
-                    isBlocked = newBlocked,
-                    subtitle = if (newBlocked) "🚫 Bloqueado" else if (current.type == ChatType.BOT) "bot" else if (current.isOnline) "en línea" else "última vez recientemente"
-                )
-            } else current
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(isBlocked = !(it.isBlocked)) }
         }
     }
 
     fun unblockChat(chatId: String) {
         _chats.update { list ->
-            list.map { if (it.id == chatId) it.copy(isBlocked = false, subtitle = if (it.type == ChatType.BOT) "bot" else if (it.isOnline) "en línea" else "última vez recientemente") else it }
+            list.map {
+                if (it.id == chatId) {
+                    it.copy(isBlocked = false)
+                } else it
+            }
         }
-        _selectedChat.update { current ->
-            if (current?.id == chatId) current.copy(isBlocked = false, subtitle = if (current.type == ChatType.BOT) "bot" else if (current.isOnline) "en línea" else "última vez recientemente") else current
-        }
-    }
-
-    fun blockChat(chatId: String) {
-        _chats.update { list ->
-            list.map { if (it.id == chatId) it.copy(isBlocked = true, subtitle = "🚫 Bloqueado") else it }
-        }
-        _selectedChat.update { current ->
-            if (current?.id == chatId) current.copy(isBlocked = true, subtitle = "🚫 Bloqueado") else current
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(isBlocked = false) }
         }
     }
 
     fun pinMessageInChat(chatId: String, messageText: String) {
         _chats.update { list ->
-            list.map { if (it.id == chatId) it.copy(pinnedMessageText = messageText) else it }
+            list.map {
+                if (it.id == chatId) it.copy(pinnedMessageText = messageText) else it
+            }
         }
-        _selectedChat.update { current ->
-            if (current?.id == chatId) current.copy(pinnedMessageText = messageText) else current
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(pinnedMessageText = messageText) }
         }
     }
 
     fun unpinMessageInChat(chatId: String) {
         _chats.update { list ->
-            list.map { if (it.id == chatId) it.copy(pinnedMessageText = null) else it }
+            list.map {
+                if (it.id == chatId) it.copy(pinnedMessageText = null) else it
+            }
         }
-        _selectedChat.update { current ->
-            if (current?.id == chatId) current.copy(pinnedMessageText = null) else current
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(pinnedMessageText = null) }
         }
     }
 
     fun deleteSingleMessage(chatId: String, messageId: String) {
-        _messages.update { currentMap ->
-            val chatMessages = currentMap[chatId] ?: emptyList()
-            currentMap + (chatId to chatMessages.filterNot { it.id == messageId })
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to list.filterNot { it.id == messageId })
         }
     }
 
     fun setPrivacyPhone(value: String) { _privacyPhone.value = value }
     fun setPrivacyLastSeen(value: String) { _privacyLastSeen.value = value }
     fun setPrivacyProfilePhoto(value: String) { _privacyProfilePhoto.value = value }
-    fun setPrivacyForwardProtect(value: Boolean) { _privacyForwardProtect.value = value }
-    fun setPrivacyPasscodeLock(value: Boolean) { _privacyPasscodeLock.value = value }
-    fun setAccountSelfDestructPeriod(value: String) { _accountSelfDestructPeriod.value = value }
-
-    fun createNewChat(title: String, type: ChatType, description: String) {
-        val newId = "chat_" + UUID.randomUUID().toString().take(6)
-        val (startColor, endColor) = when (type) {
-            ChatType.GROUP -> 0xFFFF9800L to 0xFFE65100L
-            ChatType.CHANNEL -> 0xFF9C27B0L to 0xFF4A148CL
-            ChatType.BOT -> 0xFF00C853L to 0xFF1B5E20L
-            ChatType.SECRET -> 0xFF00C853L to 0xFF00796BL
-            else -> 0xFF03A9F4L to 0xFF0288D1L
-        }
-
-        val isEncrypted = type == ChatType.SECRET
-        val newChat = Chat(
-            id = newId,
-            title = title,
-            subtitle = if (type == ChatType.CHANNEL) "1 suscriptor" else if (type == ChatType.GROUP) "1 miembro" else if (type == ChatType.SECRET) "🔒 Chat Secreto E2EE" else "recién creado",
-            username = "@" + title.lowercase().replace(" ", "_"),
-            type = type,
-            isEncrypted = isEncrypted,
-            isCloudSynced = !isEncrypted && type != ChatType.BOT,
-            encryptionKeyFingerprint = if (isEncrypted) repository.generateE2EEFingerprint("current", newId) else null,
-            lastMessage = if (type == ChatType.CHANNEL) "Canal creado" else if (type == ChatType.GROUP) "Grupo creado" else if (type == ChatType.SECRET) "🔒 Chat Secreto iniciado" else "Chat iniciado",
-            lastMessageTime = getCurrentTimeString(),
-            unreadCount = 0,
-            avatarGradientStart = startColor,
-            avatarGradientEnd = endColor
-        )
-
-        _chats.update { listOf(newChat) + it }
-        _messages.update { it + (newId to listOf(
-            Message(
-                id = "init_" + UUID.randomUUID().toString().take(6),
-                chatId = newId,
-                text = if (description.isNotBlank()) description else if (isEncrypted) "🔒 Este chat cuenta con cifrado de extremo a extremo." else "¡Bienvenido a $title!",
-                timestamp = getCurrentTimeString(),
-                isOutgoing = false,
-                senderName = title,
-                isEncrypted = isEncrypted,
-                status = MessageStatus.READ
-            )
-        )) }
-
-        selectChat(newChat)
-    }
-
-    fun startVoiceRecording() {
-        _isRecordingVoice.value = true
-        _recordingSeconds.value = 0
-        recordingTimerJob?.cancel()
-        recordingTimerJob = viewModelScope.launch {
-            while (_isRecordingVoice.value) {
-                delay(1000)
-                _recordingSeconds.update { it + 1 }
-            }
-        }
-    }
-
-    fun cancelVoiceRecording() {
-        _isRecordingVoice.value = false
-        _recordingSeconds.value = 0
-        recordingTimerJob?.cancel()
-    }
-
-    fun stopVoiceRecordingAndSend(chatId: String) {
-        val seconds = _recordingSeconds.value
-        cancelVoiceRecording()
-        if (seconds >= 1) {
-            sendVoiceMessage(chatId, seconds)
-        }
-    }
-
-    private fun handleBotResponse(userPrompt: String) {
-        viewModelScope.launch {
-            _chats.update { list ->
-                list.map { if (it.id == "paul_bot") it.copy(typingStatus = "escribiendo...") else it }
-            }
-            if (_selectedChat.value?.id == "paul_bot") {
-                _selectedChat.update { it?.copy(typingStatus = "escribiendo...") }
-            }
-
-            delay(1200)
-
-            val replyText = when {
-                userPrompt.equals("/ayuda", ignoreCase = true) ->
-                    "📋 **Comandos de Paul Bot:**\n\n• /ayuda - Muestra esta ayuda\n• /firebase - Estado de conexión a la nube\n• /e2ee - Verificación de cifrado extremo a extremo\n• /clima - Pronóstico del tiempo actual\n• /chiste - Humor dev"
-                userPrompt.equals("/firebase", ignoreCase = true) ->
-                    "☁️ **Estado Firebase Cloud:**\nBase de datos: Conectada (${getApplication<Application>().getString(com.example.R.string.firestore_database_id).take(20)}...)\nUsuarios en la nube: Detectados y sincronizados\nBúsqueda por @usuario y teléfono: Activa"
-                userPrompt.equals("/e2ee", ignoreCase = true) ->
-                    "🔒 **Cifrado Extremo a Extremo (E2EE):**\nLos contactos que no se encuentran en la base de datos de Firebase se comunican a través de Chats Secretos con cifrado local exclusivo. ¡Tus datos están protegidos!"
-                userPrompt.equals("/clima", ignoreCase = true) ->
-                    "☀️ **Clima hoy:**\nTemperatura: 23°C\nCondición: Despejado y soleado\n¡Excelente día para mensajear en Paul!"
-                userPrompt.equals("/chiste", ignoreCase = true) ->
-                    "😄 ¿Por qué los programadores confían en Firebase y E2EE?\n¡Porque uno sincroniza las bases de datos y el otro no deja rastro para los espías! 🔒⚡"
-                else ->
-                    "🤖 Recibido: \"$userPrompt\"\nPuedes agregar contactos buscando su @usuario o teléfono. Si están en Firebase se integran a la nube, y los demás pasan a cifrado E2EE."
-            }
-
-            val time = getCurrentTimeString()
-            val botMessage = Message(
-                id = "bot_reply_" + UUID.randomUUID().toString().take(8),
-                chatId = "paul_bot",
-                text = replyText,
-                timestamp = time,
-                isOutgoing = false,
-                senderName = "Paul Bot",
-                status = MessageStatus.READ
-            )
-
-            _messages.update { currentMap ->
-                val list = currentMap["paul_bot"] ?: emptyList()
-                currentMap + ("paul_bot" to (list + botMessage))
-            }
-
-            _chats.update { list ->
-                list.map {
-                    if (it.id == "paul_bot") {
-                        it.copy(
-                            lastMessage = replyText.take(50) + "...",
-                            lastMessageTime = time,
-                            typingStatus = null
-                        )
-                    } else it
-                }
-            }
-
-            if (_selectedChat.value?.id == "paul_bot") {
-                _selectedChat.update { it?.copy(typingStatus = null) }
-            }
-        }
-    }
-
-    private fun handleContactAutoReply(chatId: String, contactName: String, isEncrypted: Boolean) {
-        viewModelScope.launch {
-            _chats.update { list ->
-                list.map { if (it.id == chatId) it.copy(typingStatus = "escribiendo...") else it }
-            }
-            if (_selectedChat.value?.id == chatId) {
-                _selectedChat.update { it?.copy(typingStatus = "escribiendo...") }
-            }
-
-            delay(1800)
-
-            val replyText = if (isEncrypted) {
-                "🔒 Mensaje cifrado recibido y desencriptado en el dispositivo con éxito."
-            } else {
-                "¡Recibido! Gracias por el mensaje 🚀"
-            }
-            val time = getCurrentTimeString()
-            val contactMessage = Message(
-                id = "contact_reply_" + UUID.randomUUID().toString().take(8),
-                chatId = chatId,
-                text = replyText,
-                timestamp = time,
-                isOutgoing = false,
-                isEncrypted = isEncrypted,
-                senderName = contactName,
-                status = MessageStatus.READ
-            )
-
-            _messages.update { currentMap ->
-                val list = currentMap[chatId] ?: emptyList()
-                currentMap + (chatId to (list + contactMessage))
-            }
-
-            _chats.update { list ->
-                list.map {
-                    if (it.id == chatId) {
-                        it.copy(
-                            lastMessage = replyText,
-                            lastMessageTime = time,
-                            typingStatus = null
-                        )
-                    } else it
-                }
-            }
-
-            if (_selectedChat.value?.id == chatId) {
-                _selectedChat.update { it?.copy(typingStatus = null) }
-            }
-        }
-    }
+    fun setPrivacyForwardProtect(enabled: Boolean) { _privacyForwardProtect.value = enabled }
+    fun setPrivacyPasscodeLock(enabled: Boolean) { _privacyPasscodeLock.value = enabled }
+    fun setAccountSelfDestructPeriod(period: String) { _accountSelfDestructPeriod.value = period }
 }

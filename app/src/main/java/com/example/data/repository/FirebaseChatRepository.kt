@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.app.Activity
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
@@ -9,12 +10,14 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
+import com.example.data.RealContactsHelper
+import com.example.data.RealLocationHelper
 import com.example.data.model.Chat
 import com.example.data.model.ChatType
+import com.example.data.model.DeviceContact
 import com.example.data.model.Message
-import com.example.data.model.MessageStatus
 import com.example.data.model.User
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.example.data.model.UserRoles
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
@@ -24,15 +27,20 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.security.MessageDigest
+import java.util.UUID
 
 class FirebaseChatRepository(private val context: Context) {
+
+    private val prefs: SharedPreferences = context.getSharedPreferences("paul_user_prefs", Context.MODE_PRIVATE)
 
     private val db: FirebaseFirestore by lazy {
         val databaseId = context.getString(R.string.firestore_database_id)
@@ -40,41 +48,313 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     private val auth: FirebaseAuth get() = Firebase.auth
+    val locationHelper = RealLocationHelper(context)
+    val contactsHelper = RealContactsHelper(context)
 
-    val currentUser: User?
+    // Retrieve saved user from prefs or Firebase Auth
+    var activeUser: User?
         get() {
-            val fbUser = auth.currentUser ?: return null
+            val uid = prefs.getString("user_id", null) ?: auth.currentUser?.uid ?: return null
+            val displayName = prefs.getString("display_name", "") ?: ""
+            val username = prefs.getString("username", "") ?: ""
+            val email = prefs.getString("email", "") ?: ""
+            val phone = prefs.getString("phone", "") ?: ""
+            val bio = prefs.getString("bio", "") ?: ""
+            val role = prefs.getString("role", UserRoles.USER) ?: UserRoles.USER
+            val isBanned = prefs.getBoolean("is_banned", false)
+
+            if (displayName.isEmpty() && username.isEmpty()) {
+                val fb = auth.currentUser ?: return null
+                return User(
+                    userId = fb.uid,
+                    displayName = fb.displayName ?: "Usuario Paul",
+                    username = "@" + (fb.displayName?.lowercase()?.replace(" ", "_") ?: "user_${fb.uid.take(4)}"),
+                    email = fb.email ?: "",
+                    phoneNumber = fb.phoneNumber ?: "",
+                    bio = "Usuario en Paul Messenger",
+                    role = prefs.getString("role", UserRoles.USER) ?: UserRoles.USER,
+                    isBanned = false
+                )
+            }
+
             return User(
-                userId = fbUser.uid,
-                displayName = fbUser.displayName ?: "Usuario Paul",
-                phoneNumber = fbUser.phoneNumber ?: "",
-                username = "@" + (fbUser.displayName?.lowercase()?.replace(" ", "_") ?: "user_${fbUser.uid.take(4)}"),
-                bio = "Conectado vía Firebase Cloud ⚡",
-                isOnline = true,
-                isFirebaseUser = true
+                userId = uid,
+                displayName = displayName,
+                username = username,
+                email = email,
+                phoneNumber = phone,
+                bio = bio,
+                role = role,
+                isBanned = isBanned,
+                isOnline = true
             )
         }
+        set(value) {
+            if (value == null) {
+                prefs.edit().clear().apply()
+            } else {
+                prefs.edit()
+                    .putString("user_id", value.userId)
+                    .putString("display_name", value.displayName)
+                    .putString("username", value.username)
+                    .putString("email", value.email)
+                    .putString("phone", value.phoneNumber)
+                    .putString("bio", value.bio)
+                    .putString("role", value.role)
+                    .putBoolean("is_banned", value.isBanned)
+                    .apply()
+            }
+        }
 
-    fun isUserSignedIn(): Boolean = auth.currentUser != null
+    val currentUser: User? get() = activeUser
 
-    suspend fun registerCurrentProfile(user: User) {
-        val uid = auth.currentUser?.uid ?: return
-        val cleanUsername = user.username.trim().removePrefix("@").lowercase()
-        val data = mapOf(
-            "userId" to uid,
-            "displayName" to user.displayName,
-            "username" to cleanUsername,
-            "phoneNumber" to user.phoneNumber.trim().replace(" ", "").replace("-", ""),
-            "bio" to user.bio,
-            "isOnline" to true,
-            "avatarGradientStart" to user.avatarGradientStart,
-            "avatarGradientEnd" to user.avatarGradientEnd,
-            "updatedAt" to FieldValue.serverTimestamp()
-        )
-        try {
-            db.collection("users").document(uid).set(data, SetOptions.merge()).await()
+    fun isUserSignedIn(): Boolean = activeUser != null
+
+    suspend fun getRegisteredUsersCount(): Int {
+        return try {
+            val snapshot = db.collection("users").get().await()
+            snapshot.size()
         } catch (e: Exception) {
-            Log.e("FirebaseChatRepo", "Error registrando perfil: ${e.message}")
+            Log.w("FirebaseChatRepo", "Error counting users: ${e.message}")
+            0
+        }
+    }
+
+    /**
+     * Account Registration.
+     * Rule: The very first user to register receives the ADMIN role automatically!
+     */
+    suspend fun registerUser(
+        displayName: String,
+        username: String,
+        email: String,
+        passwordHash: String,
+        phone: String,
+        bio: String
+    ): Result<User> {
+        val cleanUser = username.trim().removePrefix("@").lowercase()
+        if (cleanUser.length < 3) {
+            return Result.failure(IllegalArgumentException("El nombre de usuario debe tener al menos 3 caracteres."))
+        }
+
+        try {
+            // Check if username is already taken
+            val existing = db.collection("users")
+                .whereEqualTo("username", cleanUser)
+                .limit(1)
+                .get()
+                .await()
+
+            if (!existing.isEmpty) {
+                return Result.failure(IllegalArgumentException("El nombre de usuario @$cleanUser ya está en uso. Elige otro."))
+            }
+
+            val userCount = getRegisteredUsersCount()
+            // THE FIRST REGISTERED USER BECOMES ADMIN!
+            val assignedRole = if (userCount == 0) UserRoles.ADMIN else UserRoles.USER
+            val generatedId = "user_" + UUID.randomUUID().toString().take(12)
+
+            val newUser = User(
+                userId = generatedId,
+                displayName = displayName.trim(),
+                username = "@$cleanUser",
+                email = email.trim(),
+                phoneNumber = phone.trim(),
+                bio = bio.ifBlank { "¡Hola! Estoy usando Paul Messenger." },
+                role = assignedRole,
+                isBanned = false,
+                isBlocked = false,
+                isOnline = true,
+                avatarGradientStart = if (assignedRole == UserRoles.ADMIN) 0xFFFF6F00 else 0xFF2AABEE,
+                avatarGradientEnd = if (assignedRole == UserRoles.ADMIN) 0xFFD84315 else 0xFF1976D2
+            )
+
+            val docData = mapOf(
+                "userId" to newUser.userId,
+                "displayName" to newUser.displayName,
+                "username" to cleanUser,
+                "email" to newUser.email,
+                "passwordHash" to hashPassword(passwordHash),
+                "phoneNumber" to newUser.phoneNumber,
+                "bio" to newUser.bio,
+                "role" to newUser.role,
+                "isBanned" to false,
+                "isBlocked" to false,
+                "isOnline" to true,
+                "avatarGradientStart" to newUser.avatarGradientStart,
+                "avatarGradientEnd" to newUser.avatarGradientEnd,
+                "createdAt" to newUser.createdAt,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+
+            db.collection("users").document(generatedId).set(docData).await()
+            activeUser = newUser
+            return Result.success(newUser)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error registrando usuario: ${e.message}", e)
+            return Result.failure(e)
+        }
+    }
+
+    /**
+     * Account Login with Username / Email & Password
+     */
+    suspend fun loginUser(
+        identifier: String,
+        passwordInput: String
+    ): Result<User> {
+        val trimmed = identifier.trim()
+        val clean = trimmed.removePrefix("@").lowercase()
+        val hashed = hashPassword(passwordInput)
+
+        try {
+            var snapshot = db.collection("users")
+                .whereEqualTo("username", clean)
+                .limit(1)
+                .get()
+                .await()
+
+            if (snapshot.isEmpty && trimmed.contains("@")) {
+                snapshot = db.collection("users")
+                    .whereEqualTo("email", trimmed)
+                    .limit(1)
+                    .get()
+                    .await()
+            }
+
+            if (snapshot.isEmpty) {
+                return Result.failure(IllegalArgumentException("No se encontró ningún usuario con esas credenciales."))
+            }
+
+            val doc = snapshot.documents.first()
+            val isBanned = doc.getBoolean("isBanned") ?: false
+            if (isBanned) {
+                return Result.failure(IllegalStateException("Esta cuenta ha sido suspendida por el Administrador."))
+            }
+
+            val storedPasswordHash = doc.getString("passwordHash")
+            if (storedPasswordHash != null && storedPasswordHash != hashed) {
+                return Result.failure(IllegalArgumentException("Contraseña incorrecta."))
+            }
+
+            val user = User(
+                userId = doc.getString("userId") ?: doc.id,
+                displayName = doc.getString("displayName") ?: "@$clean",
+                username = "@" + (doc.getString("username") ?: clean),
+                email = doc.getString("email") ?: "",
+                phoneNumber = doc.getString("phoneNumber") ?: "",
+                bio = doc.getString("bio") ?: "",
+                role = doc.getString("role") ?: UserRoles.USER,
+                isBanned = false,
+                isOnline = true,
+                avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
+                avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2
+            )
+
+            activeUser = user
+            return Result.success(user)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Login error: ${e.message}")
+            return Result.failure(e)
+        }
+    }
+
+    fun hashPassword(password: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest("paul_salt_$password".toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Real-time list of all users for the Admin Panel
+     */
+    fun observeAllUsers(): Flow<List<User>> = callbackFlow {
+        val registration: ListenerRegistration = db.collection("users")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("FirebaseChatRepo", "Error observing users: ${error.message}")
+                    close(error)
+                    return@addSnapshotListener
+                }
+
+                val userList = snapshot?.documents?.mapNotNull { doc ->
+                    val cleanUsername = doc.getString("username") ?: ""
+                    User(
+                        userId = doc.getString("userId") ?: doc.id,
+                        displayName = doc.getString("displayName") ?: "@$cleanUsername",
+                        username = if (cleanUsername.startsWith("@")) cleanUsername else "@$cleanUsername",
+                        email = doc.getString("email") ?: "",
+                        phoneNumber = doc.getString("phoneNumber") ?: "",
+                        bio = doc.getString("bio") ?: "",
+                        role = doc.getString("role") ?: UserRoles.USER,
+                        isBanned = doc.getBoolean("isBanned") ?: false,
+                        isBlocked = doc.getBoolean("isBlocked") ?: false,
+                        isOnline = doc.getBoolean("isOnline") ?: true,
+                        avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
+                        avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2,
+                        createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                    )
+                } ?: emptyList()
+
+                trySend(userList)
+            }
+
+        awaitClose { registration.remove() }
+    }
+
+    /**
+     * Admin: Change user role (ADMIN, MODERATOR, USER)
+     */
+    suspend fun updateUserRole(targetUserId: String, newRole: String): Result<Unit> {
+        val current = activeUser
+        if (current?.isAdmin != true) {
+            return Result.failure(SecurityException("Solo el Administrador Principal puede cambiar roles."))
+        }
+        return try {
+            db.collection("users").document(targetUserId).update("role", newRole).await()
+            if (targetUserId == current.userId) {
+                activeUser = current.copy(role = newRole)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Admin/Moderator: Ban or Unban a user
+     */
+    suspend fun toggleUserBan(targetUserId: String, isBanned: Boolean): Result<Unit> {
+        val current = activeUser
+        if (current?.isModerator != true) {
+            return Result.failure(SecurityException("No tienes permisos de moderador o administrador."))
+        }
+        return try {
+            db.collection("users").document(targetUserId).update(
+                mapOf(
+                    "isBanned" to isBanned,
+                    "isBlocked" to isBanned
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Admin: Delete user account completely
+     */
+    suspend fun deleteUserAccount(targetUserId: String): Result<Unit> {
+        val current = activeUser
+        if (current?.isAdmin != true) {
+            return Result.failure(SecurityException("Solo el Administrador puede eliminar cuentas."))
+        }
+        return try {
+            db.collection("users").document(targetUserId).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -100,8 +380,11 @@ class FirebaseChatRepository(private val context: Context) {
                         userId = doc.getString("userId") ?: doc.id,
                         displayName = doc.getString("displayName") ?: "@$cleanUser",
                         username = "@" + (doc.getString("username") ?: cleanUser),
+                        email = doc.getString("email") ?: "",
                         phoneNumber = doc.getString("phoneNumber") ?: "",
-                        bio = doc.getString("bio") ?: "Usuario verificado en Firebase Cloud",
+                        bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
+                        role = doc.getString("role") ?: UserRoles.USER,
+                        isBanned = doc.getBoolean("isBanned") ?: false,
                         isOnline = doc.getBoolean("isOnline") ?: true,
                         isFirebaseUser = true,
                         avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF00C853,
@@ -125,7 +408,9 @@ class FirebaseChatRepository(private val context: Context) {
                         displayName = doc.getString("displayName") ?: "Contacto $cleanPhone",
                         username = "@" + (doc.getString("username") ?: "usuario"),
                         phoneNumber = cleanPhone,
-                        bio = doc.getString("bio") ?: "Usuario verificado en Firebase Cloud",
+                        bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
+                        role = doc.getString("role") ?: UserRoles.USER,
+                        isBanned = doc.getBoolean("isBanned") ?: false,
                         isOnline = doc.getBoolean("isOnline") ?: true,
                         isFirebaseUser = true,
                         avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
@@ -137,72 +422,12 @@ class FirebaseChatRepository(private val context: Context) {
             Log.w("FirebaseChatRepo", "Búsqueda en Firestore falló: ${e.message}")
         }
 
-        // Return null if not found in Firebase database
         return null
-    }
-
-    fun generateE2EEFingerprint(id1: String, id2: String): String {
-        val combined = if (id1 < id2) "$id1:$id2:paul_e2ee" else "$id2:$id1:paul_e2ee"
-        val bytes = MessageDigest.getInstance("SHA-256").digest(combined.toByteArray())
-        return bytes.take(8).joinToString("") { "%02X".format(it) }
-    }
-
-    suspend fun seedDemoFirebaseUsers() {
-        try {
-            val demoUsers = listOf(
-                User(
-                    userId = "demo_maria",
-                    displayName = "María López",
-                    username = "maria_dev",
-                    phoneNumber = "+34600112233",
-                    bio = "Desarrolladora Cloud & Kotlin en Paul",
-                    avatarGradientStart = 0xFF9C27B0,
-                    avatarGradientEnd = 0xFF6A1B9A
-                ),
-                User(
-                    userId = "demo_lucas",
-                    displayName = "Lucas Silva",
-                    username = "lucas_cloud",
-                    phoneNumber = "+34611445566",
-                    bio = "Arquitecto de bases de datos Firebase",
-                    avatarGradientStart = 0xFF009688,
-                    avatarGradientEnd = 0xFF004D40
-                ),
-                User(
-                    userId = "demo_admin",
-                    displayName = "Soporte Paul Cloud",
-                    username = "soporte_paul",
-                    phoneNumber = "+34622778899",
-                    bio = "Canal oficial de soporte en la nube",
-                    avatarGradientStart = 0xFF2196F3,
-                    avatarGradientEnd = 0xFF0D47A1
-                )
-            )
-
-            demoUsers.forEach { user ->
-                db.collection("users").document(user.userId).set(
-                    mapOf(
-                        "userId" to user.userId,
-                        "displayName" to user.displayName,
-                        "username" to user.username.removePrefix("@"),
-                        "phoneNumber" to user.phoneNumber,
-                        "bio" to user.bio,
-                        "isOnline" to true,
-                        "avatarGradientStart" to user.avatarGradientStart,
-                        "avatarGradientEnd" to user.avatarGradientEnd,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    ),
-                    SetOptions.merge()
-                )
-            }
-        } catch (e: Exception) {
-            Log.w("FirebaseChatRepo", "Seed users opcional: ${e.message}")
-        }
     }
 
     fun onGoogleSignInClicked(
         activity: Activity,
-        onAuthSuccess: () -> Unit,
+        onAuthSuccess: (User) -> Unit,
         onAuthError: (String) -> Unit,
         scope: CoroutineScope,
         onAuthCancelled: () -> Unit = {}
@@ -226,8 +451,44 @@ class FirebaseChatRepository(private val context: Context) {
                     val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                     val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                     auth.signInWithCredential(authCredential).await()
-                    currentUser?.let { registerCurrentProfile(it) }
-                    onAuthSuccess()
+                    val fb = auth.currentUser
+                    if (fb != null) {
+                        val count = getRegisteredUsersCount()
+                        // Check if doc exists
+                        val existingDoc = db.collection("users").document(fb.uid).get().await()
+                        val role = if (existingDoc.exists()) {
+                            existingDoc.getString("role") ?: UserRoles.USER
+                        } else {
+                            if (count == 0) UserRoles.ADMIN else UserRoles.USER
+                        }
+
+                        val cleanUsername = (fb.displayName?.lowercase()?.replace(" ", "_") ?: "user_${fb.uid.take(4)}")
+                        val loggedUser = User(
+                            userId = fb.uid,
+                            displayName = fb.displayName ?: "Usuario Google",
+                            username = "@$cleanUsername",
+                            email = fb.email ?: "",
+                            phoneNumber = fb.phoneNumber ?: "",
+                            role = role,
+                            bio = "Conectado vía Google Cloud"
+                        )
+
+                        val docData = mapOf(
+                            "userId" to fb.uid,
+                            "displayName" to loggedUser.displayName,
+                            "username" to cleanUsername,
+                            "email" to loggedUser.email,
+                            "role" to role,
+                            "bio" to loggedUser.bio,
+                            "isOnline" to true,
+                            "avatarGradientStart" to loggedUser.avatarGradientStart,
+                            "avatarGradientEnd" to loggedUser.avatarGradientEnd,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                        db.collection("users").document(fb.uid).set(docData, SetOptions.merge()).await()
+                        activeUser = loggedUser
+                        onAuthSuccess(loggedUser)
+                    }
                 } else {
                     onAuthError("Tipo de credencial no compatible")
                 }
@@ -243,6 +504,7 @@ class FirebaseChatRepository(private val context: Context) {
 
     fun signOut(scope: CoroutineScope, onComplete: () -> Unit) {
         auth.signOut()
+        activeUser = null
         scope.launch {
             try {
                 val credentialManager = CredentialManager.create(context)

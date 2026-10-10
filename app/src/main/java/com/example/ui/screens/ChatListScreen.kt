@@ -90,6 +90,7 @@ fun ChatListScreen(
     onChatClick: (Chat) -> Unit,
     onCreateNewChat: (title: String, type: ChatType, description: String) -> Unit,
     onOpenSavedMessages: () -> Unit,
+    onOpenAdminPanel: () -> Unit = {},
     onOpenSettings: () -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -115,6 +116,10 @@ fun ChatListScreen(
                     onNewGroup = {
                         scope.launch { drawerState.close() }
                         showNewChatDialog = true
+                    },
+                    onOpenAdminPanel = {
+                        scope.launch { drawerState.close() }
+                        onOpenAdminPanel()
                     },
                     onOpenSettings = {
                         scope.launch { drawerState.close() }
@@ -204,6 +209,15 @@ fun ChatListScreen(
                             }
                         },
                         actions = {
+                            if (currentUser?.isAdmin == true || currentUser?.isModerator == true) {
+                                IconButton(
+                                    onClick = onOpenAdminPanel,
+                                    modifier = Modifier.testTag("top_admin_panel_button")
+                                ) {
+                                    Text("👑", fontSize = 18.sp)
+                                }
+                            }
+
                             // Add Contact by @ or phone
                             IconButton(
                                 onClick = { showAddContactDialog = true },

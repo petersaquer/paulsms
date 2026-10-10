@@ -93,6 +93,7 @@ fun SettingsScreen(
     onUpdatePrivacyLastSeen: (String) -> Unit = {},
     onToggleForwardProtect: (Boolean) -> Unit = {},
     onTogglePasscodeLock: (Boolean) -> Unit = {},
+    onOpenAdminPanel: () -> Unit = {},
     onBack: () -> Unit
 ) {
     val user = currentUser
@@ -153,22 +154,93 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.width(16.dp))
 
                 Column {
-                    Text(
-                        text = user?.name ?: "Paul Usuario",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = user?.phoneNumber?.ifEmpty { "Sin teléfono" } ?: "Sin teléfono",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = user?.name ?: "Paul Usuario",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                     Text(
                         text = user?.username ?: "@paul_user",
                         style = MaterialTheme.typography.bodySmall,
                         color = TelegramBlue
                     )
+                    Text(
+                        text = if (!user?.email.isNullOrBlank()) user?.email!! else (user?.phoneNumber?.ifEmpty { "Sin teléfono" } ?: "Sin teléfono"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // Role Badge
+                    val roleLabel = when {
+                        user?.isAdmin == true -> "👑 Administrador Principal"
+                        user?.isModerator == true -> "🛡️ Moderador"
+                        else -> "👤 Miembro de la Plataforma"
+                    }
+                    val roleColor = when {
+                        user?.isAdmin == true -> Color(0xFFFF6F00)
+                        user?.isModerator == true -> Color(0xFF7B1FA2)
+                        else -> TelegramBlue
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(roleColor.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(roleLabel, color = roleColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // ADMIN PANEL BANNER if user is admin or moderator
+            if (user?.isAdmin == true || user?.isModerator == true) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFD84315)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .clickable { onOpenAdminPanel() }
+                        .testTag("settings_open_admin_panel")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "👑 Panel de Administración",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                            Text(
+                                text = "Control total: lista de usuarios, roles, bloquear y eliminar cuentas",
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Text("Abrir ›", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    }
                 }
             }
 
