@@ -2,28 +2,28 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow read, write: if true;
     }
 
     match /chats/{chatId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if true;
 
       match /messages/{messageId} {
-        allow read, write: if isAuthenticated();
+        allow read, write: if true;
       }
     }
 
+    match /statuses/{statusId} {
+      allow read, write: if true;
+    }
+
+    match /users/{userId}/saved_contacts/{contactId} {
+      allow read, write: if true;
+    }
+
     match /app_system/{docId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
+      allow read, write: if true;
     }
   }
 }

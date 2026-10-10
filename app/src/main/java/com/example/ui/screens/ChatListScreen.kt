@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,11 +20,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +41,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -62,9 +67,11 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.Chat
 import com.example.data.model.ChatType
 import com.example.data.model.User
+import com.example.data.model.UserStatusGroup
 import com.example.ui.components.AddContactDialog
 import com.example.ui.components.ChatListItem
 import com.example.ui.components.NewChatDialog
+import com.example.ui.components.StoriesBar
 import com.example.ui.theme.TelegramAccent
 import com.example.ui.theme.TelegramBlue
 import com.example.ui.viewmodel.ChatFolder
@@ -80,6 +87,7 @@ fun ChatListScreen(
     isSearching: Boolean,
     isDarkMode: Boolean,
     isFirebaseSignedIn: Boolean,
+    statusGroups: List<UserStatusGroup> = emptyList(),
     onSelectFolder: (ChatFolder) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onToggleSearch: (Boolean) -> Unit,
@@ -91,6 +99,10 @@ fun ChatListScreen(
     onCreateNewChat: (title: String, type: ChatType, description: String) -> Unit,
     onOpenSavedMessages: () -> Unit,
     onOpenAdminPanel: () -> Unit = {},
+    onOpenContacts: () -> Unit = {},
+    onOpenStatusGroup: (UserStatusGroup) -> Unit = {},
+    onCreateTextStatus: () -> Unit = {},
+    onCreateMediaStatus: () -> Unit = {},
     onOpenSettings: () -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -109,6 +121,14 @@ fun ChatListScreen(
                     onToggleDarkMode = onToggleDarkMode,
                     onSignInGoogle = onSignInGoogle,
                     onAddContact = { showAddContactDialog = true },
+                    onOpenContacts = {
+                        scope.launch { drawerState.close() }
+                        onOpenContacts()
+                    },
+                    onCreateStatus = {
+                        scope.launch { drawerState.close() }
+                        onCreateTextStatus()
+                    },
                     onOpenSavedMessages = {
                         scope.launch { drawerState.close() }
                         onOpenSavedMessages()
@@ -218,6 +238,18 @@ fun ChatListScreen(
                                 }
                             }
 
+                            // Search and Add Contacts (Firestore Query)
+                            IconButton(
+                                onClick = onOpenContacts,
+                                modifier = Modifier.testTag("top_contacts_search_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Contacts,
+                                    contentDescription = "Contactos (@ / email)",
+                                    tint = TelegramBlue
+                                )
+                            }
+
                             // Add Contact by @ or phone
                             IconButton(
                                 onClick = { showAddContactDialog = true },
@@ -259,17 +291,51 @@ fun ChatListScreen(
                 }
             },
             floatingActionButton = {
-                FloatingActionButton(
-                    onClick = { showAddContactDialog = true },
-                    containerColor = TelegramBlue,
-                    contentColor = Color.White,
-                    modifier = Modifier.testTag("new_chat_fab")
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PersonAdd,
-                        contentDescription = "Añadir contacto o nuevo chat",
-                        modifier = Modifier.size(24.dp)
-                    )
+                    // Quick Action: Write Text Status (WhatsApp style)
+                    SmallFloatingActionButton(
+                        onClick = onCreateTextStatus,
+                        containerColor = TelegramAccent,
+                        contentColor = Color.White,
+                        modifier = Modifier.testTag("fab_create_text_status")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RateReview,
+                            contentDescription = "Crear Estado de Texto",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Quick Action: Create Reel / Media Status
+                    SmallFloatingActionButton(
+                        onClick = onCreateMediaStatus,
+                        containerColor = Color(0xFFE91E63),
+                        contentColor = Color.White,
+                        modifier = Modifier.testTag("fab_create_reel_status")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Movie,
+                            contentDescription = "Crear Reel o Foto",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Main FAB: Contacts Search & Chat
+                    FloatingActionButton(
+                        onClick = onOpenContacts,
+                        containerColor = TelegramBlue,
+                        contentColor = Color.White,
+                        modifier = Modifier.testTag("new_chat_fab")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PersonAdd,
+                            contentDescription = "Contactos y chats",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         ) { innerPadding ->
@@ -343,6 +409,18 @@ fun ChatListScreen(
                         }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    // Stories & Reels carousel (WhatsApp style)
+                    if (selectedFolder == ChatFolder.ALL) {
+                        StoriesBar(
+                            currentUser = currentUser,
+                            statusGroups = statusGroups,
+                            onOpenStatusGroup = onOpenStatusGroup,
+                            onCreateTextStatus = onCreateTextStatus,
+                            onCreateMediaStatus = onCreateMediaStatus
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                    }
                 }
 
                 // Filtered Chat List with memoization for maximum fluidity

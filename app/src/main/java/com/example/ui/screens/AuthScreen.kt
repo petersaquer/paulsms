@@ -145,51 +145,7 @@ fun AuthScreen(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // First user admin notice banner
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFFFF8E1)
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFFB300)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("👑", fontSize = 18.sp)
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Sistema de Roles y Moderación",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = Color(0xFF795548)
-                        )
-                        Text(
-                            text = if (registeredUsersCount == 0) {
-                                "¡El primer @usuario que se registre será el Administrador Principal con control total!"
-                            } else {
-                                "Regístrate con tu @usuario único para chatear y acceder a la plataforma."
-                            },
-                            fontSize = 11.sp,
-                            color = Color(0xFF5D4037)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Tabs: Iniciar Sesión / Crear Cuenta
             TabRow(
@@ -439,7 +395,7 @@ fun AuthScreen(
                         )
                     } else {
                         Text(
-                            text = if (registeredUsersCount == 0) "Crear Cuenta (Seré Admin 👑)" else "Crear Cuenta",
+                            text = "Crear Cuenta",
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp
                         )

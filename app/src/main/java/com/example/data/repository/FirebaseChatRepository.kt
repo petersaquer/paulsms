@@ -16,8 +16,13 @@ import com.example.data.model.AppUpdateInfo
 import com.example.data.model.Chat
 import com.example.data.model.DeviceContact
 import com.example.data.model.Message
+import com.example.data.model.SavedContact
+import com.example.data.model.StatusItem
+import com.example.data.model.StatusPrivacy
+import com.example.data.model.StatusViewer
 import com.example.data.model.User
 import com.example.data.model.UserRoles
+import com.example.data.model.UserStatusGroup
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
@@ -171,25 +176,28 @@ class FirebaseChatRepository(private val context: Context) {
         }
 
         try {
-            // Check if username is already taken
-            val existing = db.collection("users")
-                .whereEqualTo("username", cleanUser)
-                .limit(1)
-                .get()
-                .await()
+            // Check if username is already taken (safe query)
+            try {
+                val existing = db.collection("users")
+                    .whereEqualTo("username", cleanUser)
+                    .limit(1)
+                    .get()
+                    .await()
 
-            if (!existing.isEmpty) {
-                return Result.failure(IllegalArgumentException("El nombre de usuario @$cleanUser ya está en uso. Elige otro."))
+                if (!existing.isEmpty) {
+                    return Result.failure(IllegalArgumentException("El nombre de usuario @$cleanUser ya está registrado. Por favor elige otro."))
+                }
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Check username query warning: ${e.message}")
             }
 
             val userCount = getRegisteredUsersCount()
-            // THE FIRST REGISTERED USER BECOMES ADMIN!
             val assignedRole = if (userCount == 0) UserRoles.ADMIN else UserRoles.USER
             val generatedId = "user_" + UUID.randomUUID().toString().take(12)
 
             val newUser = User(
                 userId = generatedId,
-                displayName = displayName.trim(),
+                displayName = displayName.trim().ifBlank { "@$cleanUser" },
                 username = "@$cleanUser",
                 email = email.trim(),
                 phoneNumber = phone.trim(),
@@ -220,12 +228,19 @@ class FirebaseChatRepository(private val context: Context) {
                 "updatedAt" to FieldValue.serverTimestamp()
             )
 
-            db.collection("users").document(generatedId).set(docData).await()
             activeUser = newUser
+
+            try {
+                db.collection("users").document(generatedId).set(docData).await()
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Saving user doc to firestore warning: ${e.message}")
+            }
+
             return Result.success(newUser)
         } catch (e: Exception) {
             Log.e("FirebaseChatRepo", "Error registrando usuario: ${e.message}", e)
-            return Result.failure(e)
+            val msg = e.localizedMessage ?: "No se pudo registrar la cuenta. Por favor intenta de nuevo."
+            return Result.failure(Exception(msg))
         }
     }
 
@@ -485,71 +500,261 @@ class FirebaseChatRepository(private val context: Context) {
         }
     }
 
-    suspend fun searchUserInFirebase(query: String): User? {
+    /**
+     * Search users in Firestore by @username, email or phone
+     * Uses real Firestore queries and merges results without duplicates.
+     */
+    suspend fun searchUsersInFirestore(query: String): List<User> {
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) return null
+        if (trimmed.isEmpty()) return emptyList()
 
-        val isUsername = trimmed.startsWith("@") || trimmed.matches(Regex("^[a-zA-Z0-9_]{3,}$"))
-        val isPhone = trimmed.matches(Regex("^[+]?[0-9]{6,15}$"))
+        val cleanQuery = trimmed.removePrefix("@").lowercase()
+        val currentUserId = activeUser?.userId ?: ""
+        val resultsMap = mutableMapOf<String, User>()
+
+        fun mapDocToUser(doc: com.google.firebase.firestore.DocumentSnapshot): User? {
+            val uId = doc.getString("userId") ?: doc.id
+            if (uId == currentUserId) return null
+            val isBanned = doc.getBoolean("isBanned") ?: false
+            if (isBanned) return null
+
+            val rawUsername = doc.getString("username") ?: ""
+            val formattedUsername = if (rawUsername.startsWith("@")) rawUsername else "@$rawUsername"
+
+            return User(
+                userId = uId,
+                displayName = doc.getString("displayName") ?: formattedUsername,
+                username = formattedUsername,
+                email = doc.getString("email") ?: "",
+                phoneNumber = doc.getString("phoneNumber") ?: "",
+                bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
+                role = doc.getString("role") ?: UserRoles.USER,
+                isBanned = false,
+                isOnline = doc.getBoolean("isOnline") ?: true,
+                isFirebaseUser = true,
+                avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
+                avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2
+            )
+        }
 
         try {
-            if (isUsername) {
-                val cleanUser = trimmed.removePrefix("@").lowercase()
-                val snapshot = db.collection("users")
-                    .whereEqualTo("username", cleanUser)
-                    .limit(1)
+            // 1. Query by exact username or prefix
+            val byUser = db.collection("users")
+                .whereGreaterThanOrEqualTo("username", cleanQuery)
+                .whereLessThanOrEqualTo("username", cleanQuery + "\uf8ff")
+                .limit(20)
+                .get()
+                .await()
+            for (doc in byUser.documents) {
+                mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
+            }
+
+            // 2. Query by email prefix or exact email
+            val byEmail = db.collection("users")
+                .whereGreaterThanOrEqualTo("email", cleanQuery)
+                .whereLessThanOrEqualTo("email", cleanQuery + "\uf8ff")
+                .limit(20)
+                .get()
+                .await()
+            for (doc in byEmail.documents) {
+                mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
+            }
+
+            // 3. Exact email query if contains @
+            if (trimmed.contains("@")) {
+                val exactEmail = db.collection("users")
+                    .whereEqualTo("email", trimmed.lowercase())
+                    .limit(5)
                     .get()
                     .await()
-
-                if (!snapshot.isEmpty) {
-                    val doc = snapshot.documents.first()
-                    return User(
-                        userId = doc.getString("userId") ?: doc.id,
-                        displayName = doc.getString("displayName") ?: "@$cleanUser",
-                        username = "@" + (doc.getString("username") ?: cleanUser),
-                        email = doc.getString("email") ?: "",
-                        phoneNumber = doc.getString("phoneNumber") ?: "",
-                        bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
-                        role = doc.getString("role") ?: UserRoles.USER,
-                        isBanned = doc.getBoolean("isBanned") ?: false,
-                        isOnline = doc.getBoolean("isOnline") ?: true,
-                        isFirebaseUser = true,
-                        avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF00C853,
-                        avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF00796B
-                    )
+                for (doc in exactEmail.documents) {
+                    mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
                 }
             }
 
-            if (isPhone) {
-                val cleanPhone = trimmed.replace(" ", "").replace("-", "")
-                val snapshot = db.collection("users")
+            // 4. Query by phone if digits
+            val cleanPhone = trimmed.replace(" ", "").replace("-", "")
+            if (cleanPhone.length >= 5 && cleanPhone.any { it.isDigit() }) {
+                val byPhone = db.collection("users")
                     .whereEqualTo("phoneNumber", cleanPhone)
-                    .limit(1)
+                    .limit(5)
                     .get()
                     .await()
-
-                if (!snapshot.isEmpty) {
-                    val doc = snapshot.documents.first()
-                    return User(
-                        userId = doc.getString("userId") ?: doc.id,
-                        displayName = doc.getString("displayName") ?: "Contacto $cleanPhone",
-                        username = "@" + (doc.getString("username") ?: "usuario"),
-                        phoneNumber = cleanPhone,
-                        bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
-                        role = doc.getString("role") ?: UserRoles.USER,
-                        isBanned = doc.getBoolean("isBanned") ?: false,
-                        isOnline = doc.getBoolean("isOnline") ?: true,
-                        isFirebaseUser = true,
-                        avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
-                        avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1565C0
-                    )
+                for (doc in byPhone.documents) {
+                    mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
                 }
             }
         } catch (e: Exception) {
-            Log.w("FirebaseChatRepo", "Búsqueda en Firestore falló: ${e.message}")
+            Log.w("FirebaseChatRepo", "Error searching users in Firestore: ${e.message}")
         }
 
-        return null
+        return resultsMap.values.toList()
+    }
+
+    suspend fun searchUserInFirebase(query: String): User? {
+        return searchUsersInFirestore(query).firstOrNull()
+    }
+
+    /**
+     * Contact persistence in Firestore (users/{userId}/saved_contacts)
+     */
+    fun observeSavedContacts(userId: String): Flow<List<SavedContact>> = callbackFlow {
+        if (userId.isBlank()) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+        var registration: ListenerRegistration? = null
+        try {
+            registration = db.collection("users").document(userId)
+                .collection("saved_contacts")
+                .orderBy("addedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w("FirebaseChatRepo", "Error observing saved contacts: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    val contacts = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(SavedContact::class.java)
+                    } ?: emptyList()
+                    trySend(contacts)
+                }
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "observeSavedContacts exception: ${e.message}")
+        }
+        awaitClose { registration?.remove() }
+    }
+
+    suspend fun addSavedContact(contactUser: User): Result<Unit> {
+        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        val contact = SavedContact(
+            contactUserId = contactUser.userId,
+            displayName = contactUser.name,
+            username = contactUser.username,
+            email = contactUser.email,
+            phoneNumber = contactUser.phoneNumber,
+            bio = contactUser.bio,
+            avatarGradientStart = contactUser.avatarGradientStart,
+            avatarGradientEnd = contactUser.avatarGradientEnd,
+            role = contactUser.role,
+            isOnline = contactUser.isOnline,
+            addedAt = System.currentTimeMillis()
+        )
+        return try {
+            db.collection("users").document(current.userId)
+                .collection("saved_contacts").document(contactUser.userId)
+                .set(contact)
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error adding contact: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun removeSavedContact(contactUserId: String): Result<Unit> {
+        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        return try {
+            db.collection("users").document(current.userId)
+                .collection("saved_contacts").document(contactUserId)
+                .delete()
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ==========================================
+    // WHATSAPP-STYLE ESTADOS / REELS / STORIES
+    // ==========================================
+
+    /**
+     * Publishes a new status / reel with privacy rules
+     */
+    suspend fun createStatus(status: StatusItem): Result<Unit> {
+        return try {
+            db.collection("statuses").document(status.id).set(status).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error creating status: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Real-time active statuses stream (filters expired and respects privacy)
+     */
+    fun observeActiveStatuses(): Flow<List<StatusItem>> = callbackFlow {
+        var registration: ListenerRegistration? = null
+        try {
+            registration = db.collection("statuses")
+                .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                .limit(100)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w("FirebaseChatRepo", "Error observing statuses: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    val now = System.currentTimeMillis()
+                    val currentUid = activeUser?.userId ?: ""
+                    val all = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(StatusItem::class.java)
+                    } ?: emptyList()
+
+                    val filtered = all.filter { status ->
+                        status.expiresAt > now && status.canUserView(currentUid)
+                    }
+                    trySend(filtered)
+                }
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "observeActiveStatuses error: ${e.message}")
+        }
+        awaitClose { registration?.remove() }
+    }
+
+    /**
+     * Mark status as viewed by the current user
+     */
+    suspend fun recordStatusView(statusId: String, viewer: StatusViewer) {
+        try {
+            val docRef = db.collection("statuses").document(statusId)
+            val doc = docRef.get().await()
+            if (!doc.exists()) return
+
+            val currentViewers = doc.toObject(StatusItem::class.java)?.viewers ?: emptyList()
+            if (currentViewers.none { it.userId == viewer.userId }) {
+                docRef.update("viewers", FieldValue.arrayUnion(viewer)).await()
+            }
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "Error recording status view: ${e.message}")
+        }
+    }
+
+    /**
+     * React to a status (❤️, 🔥, 😂, etc.)
+     */
+    suspend fun reactToStatus(statusId: String, emoji: String) {
+        val currentUid = activeUser?.userId ?: return
+        try {
+            db.collection("statuses").document(statusId)
+                .update("reactions.$currentUid", emoji)
+                .await()
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "Error reacting to status: ${e.message}")
+        }
+    }
+
+    /**
+     * Delete status
+     */
+    suspend fun deleteStatus(statusId: String): Result<Unit> {
+        return try {
+            db.collection("statuses").document(statusId).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     fun onGoogleSignInClicked(

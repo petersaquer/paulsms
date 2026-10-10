@@ -15,7 +15,13 @@ import com.example.data.model.MessageStatus
 import com.example.data.model.MessageType
 import com.example.data.model.PollData
 import com.example.data.model.PollOption
+import com.example.data.model.SavedContact
+import com.example.data.model.StatusItem
+import com.example.data.model.StatusPrivacy
+import com.example.data.model.StatusType
+import com.example.data.model.StatusViewer
 import com.example.data.model.User
+import com.example.data.model.UserStatusGroup
 import com.example.data.repository.FirebaseChatRepository
 import com.example.data.sample.SampleData
 import kotlinx.coroutines.Job
@@ -25,6 +31,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -125,6 +134,102 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _registeredCount = MutableStateFlow(0)
     val registeredCount: StateFlow<Int> = _registeredCount.asStateFlow()
+
+    // Searchable Contact List & Firestore Queries
+    private val _searchContactQuery = MutableStateFlow("")
+    val searchContactQuery: StateFlow<String> = _searchContactQuery.asStateFlow()
+
+    private val _searchContactResults = MutableStateFlow<List<User>>(emptyList())
+    val searchContactResults: StateFlow<List<User>> = _searchContactResults.asStateFlow()
+
+    private val _isSearchingContacts = MutableStateFlow(false)
+    val isSearchingContacts: StateFlow<Boolean> = _isSearchingContacts.asStateFlow()
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val savedContacts: StateFlow<List<SavedContact>> = _currentUser.flatMapLatest { user ->
+        if (user != null) {
+            repository.observeSavedContacts(user.userId)
+        } else {
+            flowOf(emptyList())
+        }
+    }.catch { emit(emptyList()) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = emptyList()
+        )
+
+    // WhatsApp-Style Estados & Reels
+    val activeStatuses: StateFlow<List<StatusItem>> = repository.observeActiveStatuses()
+        .catch { emit(emptyList()) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = emptyList()
+        )
+
+    val userStatusGroups: StateFlow<List<UserStatusGroup>> = combine(
+        activeStatuses,
+        _currentUser
+    ) { statuses, current ->
+        val currentUid = current?.userId ?: ""
+        val grouped = statuses.groupBy { it.userId }
+        val list = mutableListOf<UserStatusGroup>()
+
+        // 1. Current user group if any
+        if (current != null) {
+            val myStatuses = grouped[currentUid] ?: emptyList()
+            if (myStatuses.isNotEmpty()) {
+                list.add(
+                    UserStatusGroup(
+                        userId = currentUid,
+                        displayName = current.name,
+                        username = current.username,
+                        userAvatarStart = current.avatarGradientStart,
+                        userAvatarEnd = current.avatarGradientEnd,
+                        isCurrentUser = true,
+                        statuses = myStatuses,
+                        hasUnseen = false
+                    )
+                )
+            }
+        }
+
+        // 2. Other users' groups
+        val otherGroups = grouped.filterKeys { it != currentUid }.map { (uId, userStatuses) ->
+            val first = userStatuses.first()
+            val hasUnseen = userStatuses.any { s -> s.viewers.none { it.userId == currentUid } }
+            UserStatusGroup(
+                userId = uId,
+                displayName = first.displayName,
+                username = first.username,
+                userAvatarStart = first.userAvatarStart,
+                userAvatarEnd = first.userAvatarEnd,
+                isCurrentUser = false,
+                statuses = userStatuses,
+                hasUnseen = hasUnseen
+            )
+        }.sortedWith(
+            compareByDescending<UserStatusGroup> { it.hasUnseen }
+                .thenByDescending { it.latestTimestamp }
+        )
+
+        list.addAll(otherGroups)
+        list
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000L),
+        initialValue = emptyList()
+    )
+
+    private val _selectedStatusGroup = MutableStateFlow<UserStatusGroup?>(null)
+    val selectedStatusGroup: StateFlow<UserStatusGroup?> = _selectedStatusGroup.asStateFlow()
+
+    private val _selectedStatusIndex = MutableStateFlow(0)
+    val selectedStatusIndex: StateFlow<Int> = _selectedStatusIndex.asStateFlow()
+
+    private val _defaultStatusPrivacy = MutableStateFlow(StatusPrivacy.MY_CONTACTS)
+    val defaultStatusPrivacy: StateFlow<StatusPrivacy> = _defaultStatusPrivacy.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -289,6 +394,223 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun searchUserInFirebase(query: String): User? {
         return repository.searchUserInFirebase(query)
+    }
+
+    fun setSearchContactQuery(q: String) {
+        _searchContactQuery.value = q
+        if (q.isBlank()) {
+            _searchContactResults.value = emptyList()
+        }
+    }
+
+    fun searchContactsInFirestore(query: String) {
+        _searchContactQuery.value = query
+        if (query.trim().isEmpty()) {
+            _searchContactResults.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            _isSearchingContacts.value = true
+            try {
+                val results = repository.searchUsersInFirestore(query)
+                _searchContactResults.value = results
+            } catch (e: Exception) {
+                Log.w("PaulViewModel", "Search error: ${e.message}")
+            } finally {
+                _isSearchingContacts.value = false
+            }
+        }
+    }
+
+    fun saveContact(user: User, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.addSavedContact(user)
+            res.onSuccess { onComplete() }.onFailure { onError(it.localizedMessage ?: "Error al guardar contacto") }
+        }
+    }
+
+    fun deleteSavedContact(contactUserId: String) {
+        viewModelScope.launch {
+            repository.removeSavedContact(contactUserId)
+        }
+    }
+
+    fun openChatWithUser(user: User) {
+        val existingChat = _chats.value.find { it.username.equals(user.username, ignoreCase = true) }
+        if (existingChat != null) {
+            selectChat(existingChat)
+        } else {
+            addContactAndOpenChat(
+                title = user.name,
+                username = user.username,
+                phone = user.phoneNumber,
+                isFirebase = user.isFirebaseUser
+            )
+        }
+    }
+
+    // ==========================================
+    // ESTADOS Y REELS (WhatsApp style)
+    // ==========================================
+
+    fun setDefaultStatusPrivacy(privacy: StatusPrivacy) {
+        _defaultStatusPrivacy.value = privacy
+    }
+
+    fun createStatus(
+        type: StatusType,
+        contentText: String = "",
+        mediaUrl: String = "",
+        backgroundColor: Long = 0xFF0D5C46,
+        fontStyle: String = "NORMAL",
+        caption: String = "",
+        privacy: StatusPrivacy = _defaultStatusPrivacy.value,
+        excludedIds: List<String> = emptyList(),
+        includedIds: List<String> = emptyList(),
+        onComplete: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val current = _currentUser.value ?: run {
+            onError("Debes iniciar sesión para publicar un estado")
+            return
+        }
+
+        viewModelScope.launch {
+            val status = StatusItem(
+                id = "status_" + UUID.randomUUID().toString().take(10),
+                userId = current.userId,
+                displayName = current.name,
+                username = current.username,
+                userAvatarStart = current.avatarGradientStart,
+                userAvatarEnd = current.avatarGradientEnd,
+                type = type.name,
+                contentText = contentText.trim(),
+                mediaUrl = mediaUrl.trim(),
+                backgroundColor = backgroundColor,
+                fontStyle = fontStyle,
+                caption = caption.trim(),
+                createdAt = System.currentTimeMillis(),
+                expiresAt = System.currentTimeMillis() + (24 * 60 * 60 * 1000), // 24 hours
+                privacy = privacy.name,
+                excludedUserIds = excludedIds,
+                includedUserIds = includedIds,
+                viewers = emptyList(),
+                reactions = emptyMap()
+            )
+
+            val res = repository.createStatus(status)
+            res.onSuccess { onComplete() }.onFailure { onError(it.localizedMessage ?: "Error al publicar estado") }
+        }
+    }
+
+    fun recordStatusView(statusId: String) {
+        val current = _currentUser.value ?: return
+        viewModelScope.launch {
+            val viewer = StatusViewer(
+                userId = current.userId,
+                displayName = current.name,
+                username = current.username,
+                avatarGradientStart = current.avatarGradientStart,
+                avatarGradientEnd = current.avatarGradientEnd,
+                viewedAt = System.currentTimeMillis()
+            )
+            repository.recordStatusView(statusId, viewer)
+        }
+    }
+
+    fun reactToStatus(statusId: String, emoji: String) {
+        viewModelScope.launch {
+            repository.reactToStatus(statusId, emoji)
+        }
+    }
+
+    fun deleteStatus(statusId: String, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteStatus(statusId)
+            onComplete()
+        }
+    }
+
+    fun replyToStatus(status: StatusItem, replyText: String) {
+        val summary = status.contentText.ifBlank { status.caption }.take(50)
+        val fullText = "💬 Respondió a tu estado: \"$summary\"\n$replyText"
+
+        val targetChat = _chats.value.find { it.username.equals(status.username, ignoreCase = true) }
+        val chatId = targetChat?.id ?: run {
+            val newId = "contact_" + UUID.randomUUID().toString().take(6)
+            val newChat = Chat(
+                id = newId,
+                title = status.displayName,
+                subtitle = "en línea • Paul Cloud",
+                username = status.username,
+                type = ChatType.DIRECT,
+                lastMessage = fullText,
+                lastMessageTime = getCurrentTimeString(),
+                unreadCount = 0,
+                isOnline = true,
+                isEncrypted = false,
+                isCloudSynced = true,
+                avatarGradientStart = status.userAvatarStart,
+                avatarGradientEnd = status.userAvatarEnd
+            )
+            _chats.update { listOf(newChat) + it }
+            newId
+        }
+
+        sendMessage(chatId, fullText, isViewOnce = false)
+    }
+
+    fun openStatusGroup(group: UserStatusGroup, startIndex: Int = 0) {
+        _selectedStatusGroup.value = group
+        _selectedStatusIndex.value = startIndex.coerceIn(0, (group.statuses.size - 1).coerceAtLeast(0))
+    }
+
+    fun closeStatusViewer() {
+        _selectedStatusGroup.value = null
+        _selectedStatusIndex.value = 0
+    }
+
+    fun nextStatus(): Boolean {
+        val group = _selectedStatusGroup.value ?: return false
+        val nextIdx = _selectedStatusIndex.value + 1
+        if (nextIdx < group.statuses.size) {
+            _selectedStatusIndex.value = nextIdx
+            return true
+        } else {
+            // Move to next group if available
+            val allGroups = userStatusGroups.value
+            val currentGroupIdx = allGroups.indexOfFirst { it.userId == group.userId }
+            if (currentGroupIdx != -1 && currentGroupIdx + 1 < allGroups.size) {
+                val nextGroup = allGroups[currentGroupIdx + 1]
+                _selectedStatusGroup.value = nextGroup
+                _selectedStatusIndex.value = 0
+                return true
+            } else {
+                closeStatusViewer()
+                return false
+            }
+        }
+    }
+
+    fun previousStatus(): Boolean {
+        val group = _selectedStatusGroup.value ?: return false
+        val prevIdx = _selectedStatusIndex.value - 1
+        if (prevIdx >= 0) {
+            _selectedStatusIndex.value = prevIdx
+            return true
+        } else {
+            // Move to previous group
+            val allGroups = userStatusGroups.value
+            val currentGroupIdx = allGroups.indexOfFirst { it.userId == group.userId }
+            if (currentGroupIdx > 0) {
+                val prevGroup = allGroups[currentGroupIdx - 1]
+                _selectedStatusGroup.value = prevGroup
+                _selectedStatusIndex.value = (prevGroup.statuses.size - 1).coerceAtLeast(0)
+                return true
+            } else {
+                return false
+            }
+        }
     }
 
     fun addContactAndOpenChat(title: String, username: String, phone: String, isFirebase: Boolean) {

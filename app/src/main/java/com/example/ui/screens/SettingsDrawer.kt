@@ -21,11 +21,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Security
@@ -59,6 +61,8 @@ fun SettingsDrawer(
     onToggleDarkMode: () -> Unit,
     onSignInGoogle: () -> Unit,
     onAddContact: () -> Unit,
+    onOpenContacts: () -> Unit = {},
+    onCreateStatus: () -> Unit = {},
     onOpenSavedMessages: () -> Unit,
     onNewGroup: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -174,9 +178,31 @@ fun SettingsDrawer(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Contacts & User Search
+            DrawerMenuItem(
+                title = "Contactos y Usuarios",
+                icon = Icons.Default.Contacts,
+                badge = "Búsqueda Firestore",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenContacts()
+                }
+            )
+
+            // WhatsApp-style Status & Reels
+            DrawerMenuItem(
+                title = "Crear Estado / Reel",
+                icon = Icons.Default.Movie,
+                badge = "24h • Privacidad",
+                onClick = {
+                    onCloseDrawer()
+                    onCreateStatus()
+                }
+            )
+
             // Add Contact Action
             DrawerMenuItem(
-                title = "Añadir Contacto (@ / 📱)",
+                title = "Añadir por Teléfono / @",
                 icon = Icons.Default.PersonAdd,
                 badge = "E2EE / Cloud",
                 onClick = {

@@ -27,11 +27,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.model.Chat
+import com.example.data.model.StatusType
+import com.example.ui.components.CreateStatusDialog
 import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.ChatDetailScreen
 import com.example.ui.screens.ChatListScreen
+import com.example.ui.screens.SearchContactsScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.StatusViewerScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.PaulViewModel
 
@@ -40,7 +44,8 @@ enum class PaulScreen {
     CHAT_LIST,
     CHAT_DETAIL,
     SETTINGS,
-    ADMIN_PANEL
+    ADMIN_PANEL,
+    SEARCH_CONTACTS
 }
 
 class MainActivity : ComponentActivity() {
@@ -92,6 +97,17 @@ fun PaulApp(
     val privacyLastSeen by viewModel.privacyLastSeen.collectAsStateWithLifecycle()
     val privacyForwardProtect by viewModel.privacyForwardProtect.collectAsStateWithLifecycle()
     val privacyPasscodeLock by viewModel.privacyPasscodeLock.collectAsStateWithLifecycle()
+
+    val userStatusGroups by viewModel.userStatusGroups.collectAsStateWithLifecycle()
+    val selectedStatusGroup by viewModel.selectedStatusGroup.collectAsStateWithLifecycle()
+    val selectedStatusIndex by viewModel.selectedStatusIndex.collectAsStateWithLifecycle()
+
+    val searchContactQuery by viewModel.searchContactQuery.collectAsStateWithLifecycle()
+    val searchContactResults by viewModel.searchContactResults.collectAsStateWithLifecycle()
+    val isSearchingContacts by viewModel.isSearchingContacts.collectAsStateWithLifecycle()
+    val savedContacts by viewModel.savedContacts.collectAsStateWithLifecycle()
+
+    var createStatusInitialType by remember { mutableStateOf<StatusType?>(null) }
 
     var currentScreen by remember { mutableStateOf(if (currentUser == null) PaulScreen.AUTH else PaulScreen.CHAT_LIST) }
 
@@ -205,6 +221,19 @@ fun PaulApp(
                     },
                     onOpenAdminPanel = {
                         currentScreen = PaulScreen.ADMIN_PANEL
+                    },
+                    onOpenContacts = {
+                        currentScreen = PaulScreen.SEARCH_CONTACTS
+                    },
+                    statusGroups = userStatusGroups,
+                    onOpenStatusGroup = { group ->
+                        viewModel.openStatusGroup(group)
+                    },
+                    onCreateTextStatus = {
+                        createStatusInitialType = StatusType.TEXT
+                    },
+                    onCreateMediaStatus = {
+                        createStatusInitialType = StatusType.REEL
                     },
                     onOpenSettings = {
                         currentScreen = PaulScreen.SETTINGS
@@ -394,7 +423,93 @@ fun PaulApp(
                     currentScreen = PaulScreen.CHAT_LIST
                 }
             }
+
+            PaulScreen.SEARCH_CONTACTS -> {
+                BackHandler { currentScreen = PaulScreen.CHAT_LIST }
+                SearchContactsScreen(
+                    currentUserId = currentUser?.userId ?: "",
+                    searchQuery = searchContactQuery,
+                    searchResults = searchContactResults,
+                    isSearching = isSearchingContacts,
+                    savedContacts = savedContacts,
+                    deviceContacts = viewModel.getDeviceContacts(),
+                    onQueryChange = { q -> viewModel.setSearchContactQuery(q) },
+                    onExecuteSearch = { q -> viewModel.searchContactsInFirestore(q) },
+                    onSaveContact = { u ->
+                        viewModel.saveContact(
+                            user = u,
+                            onComplete = { Toast.makeText(context, "Añadido a tus contactos", Toast.LENGTH_SHORT).show() },
+                            onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
+                        )
+                    },
+                    onDeleteSavedContact = { id -> viewModel.deleteSavedContact(id) },
+                    onOpenChat = { u ->
+                        viewModel.openChatWithUser(u)
+                        currentScreen = PaulScreen.CHAT_DETAIL
+                    },
+                    onOpenChatWithContact = { title, username, phone, isFirebase ->
+                        viewModel.addContactAndOpenChat(title, username, phone, isFirebase)
+                        currentScreen = PaulScreen.CHAT_DETAIL
+                    },
+                    onBack = { currentScreen = PaulScreen.CHAT_LIST }
+                )
+            }
         }
+    }
+
+    // Status / Reel Fullscreen Viewer Modal (WhatsApp style)
+    val activeGroup = selectedStatusGroup
+    if (activeGroup != null) {
+        BackHandler { viewModel.closeStatusViewer() }
+        StatusViewerScreen(
+            group = activeGroup,
+            currentIndex = selectedStatusIndex,
+            onClose = { viewModel.closeStatusViewer() },
+            onNext = { viewModel.nextStatus() },
+            onPrevious = { viewModel.previousStatus() },
+            onRecordView = { id -> viewModel.recordStatusView(id) },
+            onReact = { id, emoji -> viewModel.reactToStatus(id, emoji) },
+            onDeleteStatus = { id ->
+                viewModel.deleteStatus(id) {
+                    Toast.makeText(context, "Estado eliminado", Toast.LENGTH_SHORT).show()
+                    viewModel.closeStatusViewer()
+                }
+            },
+            onReply = { status, text ->
+                viewModel.replyToStatus(status, text)
+                Toast.makeText(context, "Respuesta enviada al chat", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    // Create Status Dialog Modal (WhatsApp style)
+    val statusTypeToCreate = createStatusInitialType
+    if (statusTypeToCreate != null) {
+        CreateStatusDialog(
+            initialType = statusTypeToCreate,
+            availableContacts = savedContacts,
+            onDismiss = { createStatusInitialType = null },
+            onPublish = { type, text, mediaUrl, bgGradient, fontStyle, caption, privacy, excludedIds, includedIds ->
+                viewModel.createStatus(
+                    type = type,
+                    contentText = text,
+                    mediaUrl = mediaUrl,
+                    backgroundColor = bgGradient,
+                    fontStyle = fontStyle,
+                    caption = caption,
+                    privacy = privacy,
+                    excludedIds = excludedIds,
+                    includedIds = includedIds,
+                    onComplete = {
+                        Toast.makeText(context, "¡Estado publicado!", Toast.LENGTH_SHORT).show()
+                        createStatusInitialType = null
+                    },
+                    onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        )
     }
 
     // In-App Update Prompt Dialog for All Users

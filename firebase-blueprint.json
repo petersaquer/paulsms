@@ -46,6 +46,37 @@
         "isEncrypted": { "type": "boolean" },
         "createdAt": { "type": "timestamp" }
       }
+    },
+    "Status": {
+      "path": "statuses/{statusId}",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "username": { "type": "string" },
+        "type": { "type": "string" },
+        "contentText": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "backgroundColor": { "type": "number" },
+        "fontStyle": { "type": "string" },
+        "caption": { "type": "string" },
+        "privacy": { "type": "string" },
+        "excludedUserIds": { "type": "list" },
+        "includedUserIds": { "type": "list" },
+        "createdAt": { "type": "number" },
+        "expiresAt": { "type": "number" }
+      }
+    },
+    "SavedContact": {
+      "path": "users/{userId}/saved_contacts/{contactId}",
+      "fields": {
+        "contactUserId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "addedAt": { "type": "number" }
+      }
     }
   }
 }
