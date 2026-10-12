@@ -90,25 +90,11 @@ fun AboutPaulDialog(
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // App Logo / Avatar
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(TelegramBlue, TelegramAccent)
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "P",
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
+                // Official App Logo (P con pajarito)
+                PaulAppLogo(
+                    size = 76.dp,
+                    showShadow = true
+                )
 
                 Spacer(modifier = Modifier.height(12.dp))
 

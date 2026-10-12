@@ -33,6 +33,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import com.example.ui.components.PaulAppLogo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -222,12 +223,16 @@ fun ChatListScreen(
                 } else {
                     TopAppBar(
                         title = {
-                            Text(
-                                text = "Paul",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                PaulAppLogo(size = 30.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Paul",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 20.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         },
                         navigationIcon = {
                             IconButton(

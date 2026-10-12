@@ -109,25 +109,12 @@ fun AuthScreen(
         ) {
             Spacer(modifier = Modifier.height(16.dp))
 
-            // App Brand Logo
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(TelegramBlue, TelegramAccent)
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Send,
-                    contentDescription = "Logo",
-                    tint = Color.White,
-                    modifier = Modifier.size(42.dp)
-                )
-            }
+            // App Brand Logo (P con pajarito oficial)
+            com.example.ui.components.PaulAppLogo(
+                size = 84.dp,
+                showShadow = true,
+                contentDescription = "Paul Messenger Logo"
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 

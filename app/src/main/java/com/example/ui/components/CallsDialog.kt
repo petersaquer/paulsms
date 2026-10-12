@@ -95,6 +95,8 @@ fun CallsDialog(
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var dialNumber by remember { mutableStateOf("") }
+    var activeCallContact by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var isActiveCallVideo by remember { mutableStateOf(false) }
 
     val callLogs = remember(availableChats) {
         if (availableChats.isNotEmpty()) {
@@ -224,7 +226,8 @@ fun CallsDialog(
                             CallItemRow(
                                 call = call,
                                 onCall = {
-                                    startDialIntent(context, call.phoneNumber)
+                                    isActiveCallVideo = call.isVideo
+                                    activeCallContact = Pair(call.contactName, call.phoneNumber)
                                 }
                             )
                         }
@@ -263,8 +266,9 @@ fun CallsDialog(
                         ) {
                             Button(
                                 onClick = {
-                                    val numberToDial = dialNumber.ifBlank { "+595981123456" }
-                                    startDialIntent(context, numberToDial)
+                                    val numberToDial = dialNumber.ifBlank { "+595 981 123456" }
+                                    isActiveCallVideo = false
+                                    activeCallContact = Pair(numberToDial, numberToDial)
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
                                 shape = RoundedCornerShape(24.dp),
@@ -279,8 +283,9 @@ fun CallsDialog(
 
                             Button(
                                 onClick = {
-                                    val numberToDial = dialNumber.ifBlank { "+595981123456" }
-                                    startDialIntent(context, numberToDial)
+                                    val numberToDial = dialNumber.ifBlank { "+595 981 123456" }
+                                    isActiveCallVideo = true
+                                    activeCallContact = Pair(numberToDial, numberToDial)
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue),
                                 shape = RoundedCornerShape(24.dp),
@@ -308,6 +313,16 @@ fun CallsDialog(
                 }
             }
         }
+    }
+
+    // Active Call Overlay inside CallsDialog
+    activeCallContact?.let { contact ->
+        ActiveCallScreen(
+            contactName = contact.first,
+            phoneNumber = contact.second,
+            isVideoCall = isActiveCallVideo,
+            onEndCall = { activeCallContact = null }
+        )
     }
 }
 

@@ -57,6 +57,7 @@ import com.example.data.model.User
 import com.example.ui.components.AboutPaulDialog
 import com.example.ui.components.CallsDialog
 import com.example.ui.components.E2EESecurityDialog
+import com.example.ui.components.PaulAppLogo
 import com.example.ui.theme.TelegramBlue
 import com.example.ui.theme.TelegramDarkBlue
 
@@ -127,6 +128,11 @@ fun SettingsDrawer(
                         }
 
                         Spacer(modifier = Modifier.weight(1f))
+
+                        // Official App Logo Badge (P con pajarito)
+                        PaulAppLogo(size = 38.dp, showShadow = true)
+
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         // Theme Mode Toggle
                         IconButton(
@@ -287,6 +293,7 @@ fun SettingsDrawer(
             DrawerMenuItem(
                 title = "Acerca de Paul",
                 icon = Icons.Default.Info,
+                customLeading = { PaulAppLogo(size = 24.dp) },
                 onClick = {
                     onCloseDrawer()
                     showAboutDialog = true
@@ -313,6 +320,7 @@ private fun DrawerMenuItem(
     title: String,
     icon: ImageVector,
     badge: String? = null,
+    customLeading: (@Composable () -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -322,12 +330,16 @@ private fun DrawerMenuItem(
             .padding(horizontal = 18.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = title,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(24.dp)
-        )
+        if (customLeading != null) {
+            customLeading()
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+        }
         Spacer(modifier = Modifier.width(18.dp))
         Text(
             text = title,

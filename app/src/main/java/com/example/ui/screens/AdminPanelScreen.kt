@@ -139,6 +139,8 @@ fun AdminPanelScreen(
                 title = {
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            com.example.ui.components.PaulAppLogo(size = 22.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text("👑 Panel de Administración", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         }
                         Text(

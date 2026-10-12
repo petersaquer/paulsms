@@ -11,6 +11,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +32,8 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.SentimentSatisfiedAlt
@@ -43,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,17 +57,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import com.example.data.model.GroupMember
 import com.example.data.model.Message
-import com.example.ui.components.EmojiPickerSheet
 import com.example.ui.theme.TelegramAccent
 import com.example.ui.theme.TelegramBlue
+import kotlin.math.roundToInt
+import com.example.ui.components.EmojiPickerSheet
 
 @Composable
 fun ChatInputBar(
@@ -83,6 +93,9 @@ fun ChatInputBar(
     var text by remember { mutableStateOf("") }
     var isViewOnce by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
+    var isVoiceLocked by remember { mutableStateOf(false) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
 
     val mentionQuery = remember(text) {
         val lastWord = text.substringAfterLast(" ", text)
@@ -318,12 +331,23 @@ fun ChatInputBar(
                 }
             }
 
-            // Main Input Row
+            // Main Input Row or Voice Recording Row
             if (isRecordingVoice) {
                 VoiceRecordingIndicatorBar(
                     seconds = recordingSeconds,
-                    onCancel = onCancelRecording,
-                    onSend = onStopRecordingAndSend
+                    isLocked = isVoiceLocked,
+                    onCancel = {
+                        isVoiceLocked = false
+                        dragOffsetY = 0f
+                        dragOffsetX = 0f
+                        onCancelRecording()
+                    },
+                    onSend = {
+                        isVoiceLocked = false
+                        dragOffsetY = 0f
+                        dragOffsetX = 0f
+                        onStopRecordingAndSend()
+                    }
                 )
             } else {
                 Row(
@@ -424,7 +448,7 @@ fun ChatInputBar(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Right action: Voice or Send
+                    // Right action: Voice (Hold/Slide WhatsApp style) or Send
                     if (text.isNotBlank()) {
                         // Send Button
                         Box(
@@ -448,19 +472,78 @@ fun ChatInputBar(
                             )
                         }
                     } else {
-                        // Voice Record Button
+                        // WhatsApp style: Press & Hold to record, Drag up to lock, Drag left to cancel, Click to tap-record
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
+                                .offset { IntOffset(0, dragOffsetY.roundToInt().coerceIn(-120, 0)) }
                                 .clip(CircleShape)
                                 .background(TelegramAccent)
-                                .clickable { onStartRecording() }
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            // Fallback: tap toggles recording directly
+                                            isVoiceLocked = true
+                                            onStartRecording()
+                                        },
+                                        onPress = {
+                                            isVoiceLocked = false
+                                            dragOffsetY = 0f
+                                            dragOffsetX = 0f
+                                            onStartRecording()
+                                            val released = tryAwaitRelease()
+                                            if (released) {
+                                                // User released finger
+                                                if (!isVoiceLocked) {
+                                                    if (dragOffsetX < -100f) {
+                                                        onCancelRecording()
+                                                    } else {
+                                                        onStopRecordingAndSend()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                                .pointerInput(Unit) {
+                                    detectDragGestures(
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            dragOffsetY += dragAmount.y
+                                            dragOffsetX += dragAmount.x
+
+                                            // Slide up by 80px -> Lock audio for long recording hands-free
+                                            if (dragOffsetY < -80f && !isVoiceLocked) {
+                                                isVoiceLocked = true
+                                            }
+                                            // Slide left by 120px -> Cancel recording
+                                            if (dragOffsetX < -120f) {
+                                                isVoiceLocked = false
+                                                onCancelRecording()
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            if (!isVoiceLocked) {
+                                                if (dragOffsetX < -100f) {
+                                                    onCancelRecording()
+                                                } else {
+                                                    onStopRecordingAndSend()
+                                                }
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            if (!isVoiceLocked) {
+                                                onCancelRecording()
+                                            }
+                                        }
+                                    )
+                                }
                                 .testTag("mic_button"),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
-                                contentDescription = "Grabar nota de voz",
+                                contentDescription = "Mantén presionado para hablar, desliza hacia arriba para bloquear",
                                 tint = Color.White,
                                 modifier = Modifier.size(24.dp)
                             )
@@ -475,6 +558,7 @@ fun ChatInputBar(
 @Composable
 private fun VoiceRecordingIndicatorBar(
     seconds: Int,
+    isLocked: Boolean,
     onCancel: () -> Unit,
     onSend: () -> Unit,
     modifier: Modifier = Modifier
@@ -516,21 +600,42 @@ private fun VoiceRecordingIndicatorBar(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        Text(
-            text = "Grabando audio...",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        // Status text
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.weight(1f)
-        )
+        ) {
+            if (isLocked) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = TelegramAccent,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Audio bloqueado (manos libres)",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = TelegramAccent
+                )
+            } else {
+                Text(
+                    text = "Desliza ⇦ cancelar | ⇧ fijar",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
 
-        // Cancel Button
+        // Cancel / Trash Button
         IconButton(
             onClick = onCancel,
             modifier = Modifier.size(40.dp)
         ) {
             Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Cancelar grabación",
+                imageVector = Icons.Default.Delete,
+                contentDescription = "Cancelar y descartar audio",
                 tint = Color.Red
             )
         }

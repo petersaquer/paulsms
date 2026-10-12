@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -233,6 +234,8 @@ fun ChatDetailScreen(
     var showClearChatConfirmDialog by remember { mutableStateOf(false) }
     var showDialPhoneDialog by remember { mutableStateOf(false) }
     var customPhoneNumber by remember { mutableStateOf("") }
+    var showActiveCallScreen by remember { mutableStateOf(false) }
+    var isVideoCallActive by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
 
@@ -404,16 +407,23 @@ fun ChatDetailScreen(
                         }
 
                         IconButton(onClick = {
-                            try {
-                                val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:${chat.contactPhone ?: "+595981123456"}"))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                // Fallback or permission check
-                            }
+                            isVideoCallActive = false
+                            showActiveCallScreen = true
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Call,
-                                contentDescription = "Llamar",
+                                contentDescription = "Llamada de voz",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            isVideoCallActive = true
+                            showActiveCallScreen = true
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = "Videollamada",
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -1021,6 +1031,15 @@ fun ChatDetailScreen(
             dismissButton = {
                 TextButton(onClick = { forwardingMessage = null }) { Text("Cancelar") }
             }
+        )
+    }
+    // Active Call Screen (Voice or Video Call)
+    if (showActiveCallScreen) {
+        com.example.ui.components.ActiveCallScreen(
+            contactName = chat.title,
+            phoneNumber = chat.contactPhone ?: "+595 981 123456",
+            isVideoCall = isVideoCallActive,
+            onEndCall = { showActiveCallScreen = false }
         )
     }
 }

@@ -326,6 +326,7 @@ fun SettingsScreen(
                 title = "Acerca de Paul Messenger",
                 subtitle = "Versión 1.2.0 • Términos y privacidad",
                 icon = Icons.Default.Info,
+                customLeading = { com.example.ui.components.PaulAppLogo(size = 24.dp) },
                 onClick = { showAboutDialog = true }
             )
 
@@ -538,9 +539,19 @@ private fun BlockedUsersDialog(
 }
 
 @Composable
-private fun SettingsItem(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit = {}) {
+private fun SettingsItem(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    customLeading: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit = {}
+) {
     Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (customLeading != null) {
+            customLeading()
+        } else {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(modifier = Modifier.width(16.dp))
         Column {
             Text(title, fontWeight = FontWeight.Medium)
