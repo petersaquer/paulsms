@@ -28,8 +28,12 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
+import com.example.ui.components.AboutPaulDialog
+import com.example.ui.components.DataStorageDialog
+import com.example.ui.components.E2EESecurityDialog
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
@@ -113,6 +117,8 @@ fun SettingsScreen(
     var showNotificationsDialog by remember { mutableStateOf(false) }
     var showDataUsageDialog by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showSecurityDialog by remember { mutableStateOf(false) }
 
     // Edit profile form state
     var editName by remember(user) { mutableStateOf(user?.displayName ?: "") }
@@ -304,9 +310,23 @@ fun SettingsScreen(
 
             SettingsItem(
                 title = "Datos y almacenamiento",
-                subtitle = "Uso de red",
+                subtitle = "Uso de memoria caché y red",
                 icon = Icons.Default.DataUsage,
                 onClick = { showDataUsageDialog = true }
+            )
+
+            SettingsItem(
+                title = "Seguridad y cifrado E2EE",
+                subtitle = "Huella criptográfica y protección de claves",
+                icon = Icons.Default.Security,
+                onClick = { showSecurityDialog = true }
+            )
+
+            SettingsItem(
+                title = "Acerca de Paul Messenger",
+                subtitle = "Versión 1.2.0 • Términos y privacidad",
+                icon = Icons.Default.Info,
+                onClick = { showAboutDialog = true }
             )
 
             Row(
@@ -361,12 +381,15 @@ fun SettingsScreen(
     }
 
     if (showDataUsageDialog) {
-        AlertDialog(
-            onDismissRequest = { showDataUsageDialog = false },
-            title = { Text("Datos") },
-            text = { Text("Caché y uso de red optimizados.") },
-            confirmButton = { TextButton(onClick = { showDataUsageDialog = false }) { Text("OK") } }
-        )
+        DataStorageDialog(onDismiss = { showDataUsageDialog = false })
+    }
+
+    if (showAboutDialog) {
+        AboutPaulDialog(onDismiss = { showAboutDialog = false })
+    }
+
+    if (showSecurityDialog) {
+        E2EESecurityDialog(onDismiss = { showSecurityDialog = false })
     }
 
     if (showEditProfileDialog) {

@@ -39,6 +39,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +54,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.User
+import com.example.ui.components.AboutPaulDialog
+import com.example.ui.components.CallsDialog
+import com.example.ui.components.E2EESecurityDialog
 import com.example.ui.theme.TelegramBlue
 import com.example.ui.theme.TelegramDarkBlue
 
@@ -71,6 +78,9 @@ fun SettingsDrawer(
     modifier: Modifier = Modifier
 ) {
     val user = currentUser
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showSecurityDialog by remember { mutableStateOf(false) }
+    var showCallsDialog by remember { mutableStateOf(false) }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -235,6 +245,7 @@ fun SettingsDrawer(
                 icon = Icons.Default.Call,
                 onClick = {
                     onCloseDrawer()
+                    showCallsDialog = true
                 }
             )
 
@@ -269,6 +280,7 @@ fun SettingsDrawer(
                 icon = Icons.Default.Lock,
                 onClick = {
                     onCloseDrawer()
+                    showSecurityDialog = true
                 }
             )
 
@@ -277,9 +289,22 @@ fun SettingsDrawer(
                 icon = Icons.Default.Info,
                 onClick = {
                     onCloseDrawer()
+                    showAboutDialog = true
                 }
             )
         }
+    }
+
+    if (showAboutDialog) {
+        AboutPaulDialog(onDismiss = { showAboutDialog = false })
+    }
+
+    if (showSecurityDialog) {
+        E2EESecurityDialog(onDismiss = { showSecurityDialog = false })
+    }
+
+    if (showCallsDialog) {
+        CallsDialog(onDismiss = { showCallsDialog = false })
     }
 }
 

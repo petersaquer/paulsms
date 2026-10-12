@@ -230,6 +230,9 @@ fun ChatDetailScreen(
     var showCreatePollDialog by remember { mutableStateOf(false) }
     var showPinnedBanner by remember { mutableStateOf(chat.pinnedMessageText != null) }
     var viewingOnceMessage by remember { mutableStateOf<Message?>(null) }
+    var showClearChatConfirmDialog by remember { mutableStateOf(false) }
+    var showDialPhoneDialog by remember { mutableStateOf(false) }
+    var customPhoneNumber by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
 
