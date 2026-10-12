@@ -23,6 +23,9 @@ data class User(
     val isFirebaseUser: Boolean = true,
     val avatarGradientStart: Long = 0xFF2AABEE,
     val avatarGradientEnd: Long = 0xFF2275B3,
+    val privacyLastSeen: String = "Todos", // "Todos", "Mis contactos", "Nadie"
+    val privacyPhone: String = "Mis contactos",
+    val privacyReadReceipts: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val name: String get() = displayName.ifEmpty { username }

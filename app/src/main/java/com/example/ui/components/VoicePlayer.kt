@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,13 +51,24 @@ fun VoicePlayer(
 
     LaunchedEffect(isPlaying) {
         if (isPlaying) {
-            val totalMillis = durationSeconds * 1000L
+            val totalMillis = (durationSeconds.coerceAtLeast(1)) * 1000L
             val stepMillis = 100L
-            val steps = totalMillis / stepMillis
-            for (i in 0..steps) {
-                if (!isPlaying) break
-                progress = i.toFloat() / steps
-                delay(stepMillis)
+            val steps = (totalMillis / stepMillis).coerceAtLeast(1)
+            val toneGenerator = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 70) }.getOrNull()
+
+            try {
+                for (i in 0..steps) {
+                    if (!isPlaying) break
+                    progress = i.toFloat() / steps
+
+                    // Reproducir tono de audio en vivo durante la reproducción de la nota de voz
+                    if (i % 3L == 0L) {
+                        toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 50)
+                    }
+                    delay(stepMillis)
+                }
+            } finally {
+                toneGenerator?.release()
             }
             isPlaying = false
             progress = 0f

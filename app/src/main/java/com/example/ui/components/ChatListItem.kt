@@ -194,6 +194,21 @@ fun ChatListItem(
                     Spacer(modifier = Modifier.width(4.dp))
                 }
 
+                if (chat.isLocked) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Protegido con PIN",
+                        tint = TelegramBlue,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+
+                if (chat.disappearingTimerSeconds > 0) {
+                    Text("⏳", fontSize = 11.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+
                 if (chat.unreadCount > 0) {
                     Box(
                         modifier = Modifier
@@ -209,6 +224,13 @@ fun ChatListItem(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                } else if (chat.isMarkedUnread) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(TelegramBlue)
+                    )
                 }
             }
         }

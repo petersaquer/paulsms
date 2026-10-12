@@ -31,5 +31,16 @@ data class Chat(
     val memberCount: Int? = null,
     val avatarGradientStart: Long = 0xFF2AABEE,
     val avatarGradientEnd: Long = 0xFF2275B3,
-    val pinnedMessageText: String? = null
+    val pinnedMessageText: String? = null,
+    val groupConfig: GroupConfig? = null,
+    val pinnedMessageIds: List<String> = emptyList(),
+    val selectedTopicId: String? = null,
+    val disappearingTimerSeconds: Int = 0, // 0 = disabled, 86400 (24h), 604800 (7d), 7776000 (90d)
+    val isLocked: Boolean = false,
+    val lockPin: String = "",
+    val isArchived: Boolean = false,
+    val keepArchivedOnNewMessage: Boolean = true,
+    val isMarkedUnread: Boolean = false,
+    val mutedUntilTimestamp: Long = 0L, // 0 = not muted, -1 = forever, >0 = millis
+    val readReceiptsEnabled: Boolean = true
 )

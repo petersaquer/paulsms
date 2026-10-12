@@ -1,0 +1,107 @@
+package com.example.data.local
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import com.example.data.model.Message
+import com.example.data.model.MessageStatus
+import com.example.data.model.MessageType
+
+@Entity(tableName = "messages")
+data class MessageEntity(
+    @PrimaryKey val id: String,
+    val chatId: String,
+    val text: String,
+    val timestamp: String,
+    val isOutgoing: Boolean,
+    val senderId: String = "",
+    val senderUsername: String = "",
+    val senderName: String?,
+    val senderAvatarGradient: Long?,
+    val status: String,
+    val type: String,
+    val isEncrypted: Boolean,
+    val isViewOnce: Boolean,
+    val hasBeenViewed: Boolean,
+    val forwardedFrom: String?,
+    val voiceDurationSeconds: Int?,
+    val photoUrl: String?,
+    val videoUrl: String?,
+    val fileUrl: String?,
+    val fileName: String?,
+    val fileSize: String?,
+    val contactName: String?,
+    val contactPhone: String?,
+    val contactUsername: String?,
+    val gifUrl: String?,
+    val stickerEmoji: String?,
+    val isEdited: Boolean = false,
+    val isStarred: Boolean = false,
+    val isDeletedForEveryone: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    fun toMessage(): Message = Message(
+        id = id,
+        chatId = chatId,
+        text = text,
+        timestamp = timestamp,
+        isOutgoing = isOutgoing,
+        senderId = senderId,
+        senderUsername = senderUsername,
+        senderName = senderName,
+        senderAvatarGradient = senderAvatarGradient,
+        status = try { MessageStatus.valueOf(status) } catch (e: Exception) { MessageStatus.READ },
+        type = try { MessageType.valueOf(type) } catch (e: Exception) { MessageType.TEXT },
+        isEncrypted = isEncrypted,
+        isViewOnce = isViewOnce,
+        hasBeenViewed = hasBeenViewed,
+        forwardedFrom = forwardedFrom,
+        isEdited = isEdited,
+        isStarred = isStarred,
+        isDeletedForEveryone = isDeletedForEveryone,
+        voiceDurationSeconds = voiceDurationSeconds,
+        photoUrl = photoUrl,
+        videoUrl = videoUrl,
+        fileUrl = fileUrl,
+        fileName = fileName,
+        fileSize = fileSize,
+        contactName = contactName,
+        contactPhone = contactPhone,
+        contactUsername = contactUsername,
+        gifUrl = gifUrl,
+        stickerEmoji = stickerEmoji
+    )
+
+    companion object {
+        fun fromMessage(message: Message): MessageEntity = MessageEntity(
+            id = message.id,
+            chatId = message.chatId,
+            text = message.text,
+            timestamp = message.timestamp,
+            isOutgoing = message.isOutgoing,
+            senderId = message.senderId,
+            senderUsername = message.senderUsername,
+            senderName = message.senderName,
+            senderAvatarGradient = message.senderAvatarGradient,
+            status = message.status.name,
+            type = message.type.name,
+            isEncrypted = message.isEncrypted,
+            isViewOnce = message.isViewOnce,
+            hasBeenViewed = message.hasBeenViewed,
+            forwardedFrom = message.forwardedFrom,
+            voiceDurationSeconds = message.voiceDurationSeconds,
+            photoUrl = message.photoUrl,
+            videoUrl = message.videoUrl,
+            fileUrl = message.fileUrl,
+            fileName = message.fileName,
+            fileSize = message.fileSize,
+            contactName = message.contactName,
+            contactPhone = message.contactPhone,
+            contactUsername = message.contactUsername,
+            gifUrl = message.gifUrl,
+            stickerEmoji = message.stickerEmoji,
+            isEdited = message.isEdited,
+            isStarred = message.isStarred,
+            isDeletedForEveryone = message.isDeletedForEveryone
+        )
+    }
+}

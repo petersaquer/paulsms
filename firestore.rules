@@ -14,8 +14,41 @@ service cloud.firestore {
       }
     }
 
+    // Colección de Estados/Historias de 24 horas y subcolección de vistas
     match /statuses/{statusId} {
-      allow read, write: if true;
+      // Creación: Solo el autor puede subir su estado
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+
+      // Eliminación: Solo el autor puede borrar su propio estado
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
+      // Lectura: Autor o usuarios autorizados por privacidad y no expirados (expiresAt > Date.now)
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.expiresAt > request.time.toMillis() && (
+          resource.data.privacy == 'PUBLIC' ||
+          resource.data.privacy == 'MY_CONTACTS' ||
+          (resource.data.privacy == 'MY_CONTACTS_EXCEPT' && !(request.auth.uid in resource.data.excludedUserIds)) ||
+          (resource.data.privacy == 'ONLY_SHARE_WITH' && request.auth.uid in resource.data.includedUserIds)
+        ))
+      );
+
+      // Actualización: Autor modifica o lectores interactúan (reacciones)
+      allow update: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions', 'viewers'])
+      );
+
+      // Subcolección 'views' para registro idempotente de visualizaciones
+      match /views/{viewId} {
+        // Solo el autor del estado puede leer quién lo vio
+        allow read: if request.auth != null && 
+          get(/databases/$(database)/documents/statuses/$(statusId)).data.userId == request.auth.uid;
+
+        // Registro de vista idempotente: Cada usuario solo puede escribir su propio ID de vista (viewId == uid)
+        allow create: if request.auth != null && viewId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     match /users/{userId}/saved_contacts/{contactId} {

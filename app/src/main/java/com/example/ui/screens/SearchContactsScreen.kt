@@ -342,8 +342,10 @@ fun SearchContactsScreen(
                         if (debouncedQuery.isBlank()) savedContacts else {
                             savedContacts.filter {
                                 it.name.contains(debouncedQuery, ignoreCase = true) ||
+                                        it.displayName.contains(debouncedQuery, ignoreCase = true) ||
                                         it.username.contains(debouncedQuery, ignoreCase = true) ||
-                                        it.email.contains(debouncedQuery, ignoreCase = true)
+                                        it.email.contains(debouncedQuery, ignoreCase = true) ||
+                                        it.phoneNumber.contains(debouncedQuery, ignoreCase = true)
                             }
                         }
                     }

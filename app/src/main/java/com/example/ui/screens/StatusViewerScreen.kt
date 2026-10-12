@@ -112,7 +112,10 @@ fun StatusViewerScreen(
     val progress = remember(currentIndex, group.userId) { Animatable(0f) }
 
     LaunchedEffect(currentStatus.id) {
-        onRecordView(currentStatus.id)
+        delay(1000L) // Confirmar vista solo tras permanecer > 1s en pantalla
+        if (isActive) {
+            onRecordView(currentStatus.id)
+        }
     }
 
     LaunchedEffect(currentIndex, group.userId, isPaused) {

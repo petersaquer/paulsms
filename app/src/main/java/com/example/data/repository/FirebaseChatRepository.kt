@@ -12,10 +12,24 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
 import com.example.data.RealContactsHelper
 import com.example.data.RealLocationHelper
+import com.example.data.local.AppDatabase
+import com.example.data.local.ChatEntity
+import com.example.data.local.ContactEntity
+import com.example.data.local.MessageEntity
 import com.example.data.model.AppUpdateInfo
 import com.example.data.model.Chat
+import com.example.data.model.ChatType
 import com.example.data.model.DeviceContact
 import com.example.data.model.Message
+import com.example.data.model.GroupAccessConfig
+import com.example.data.model.GroupAdminPermissions
+import com.example.data.model.GroupConfig
+import com.example.data.model.GroupGlobalPermissions
+import com.example.data.model.GroupMember
+import com.example.data.model.GroupRole
+import com.example.data.model.JoinRequest
+import com.example.data.model.AuditLogEntry
+import com.example.data.model.Topic
 import com.example.data.model.SavedContact
 import com.example.data.model.StatusItem
 import com.example.data.model.StatusPrivacy
@@ -36,9 +50,11 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.security.MessageDigest
@@ -48,6 +64,11 @@ import java.util.Locale
 import java.util.UUID
 
 class FirebaseChatRepository(private val context: Context) {
+
+    private val localDb: AppDatabase by lazy { AppDatabase.getInstance(context) }
+    val chatDao by lazy { localDb.chatDao() }
+    val messageDao by lazy { localDb.messageDao() }
+    val contactDao by lazy { localDb.contactDao() }
 
     private val prefs: SharedPreferences = context.getSharedPreferences("paul_user_prefs", Context.MODE_PRIVATE)
 
@@ -355,9 +376,132 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     /**
-     * Real-time Messages for a Chat
+     * Deterministic Chat ID helper for Direct Messages
      */
-    fun observeRealtimeMessages(chatId: String): Flow<List<Message>> = callbackFlow {
+    fun getDirectChatId(uid1: String, uid2: String): String {
+        val u1 = uid1.trim().removePrefix("@").lowercase()
+        val u2 = uid2.trim().removePrefix("@").lowercase()
+        return if (u1 < u2) "direct_${u1}_${u2}" else "direct_${u2}_${u1}"
+    }
+
+    /**
+     * Local Room Database Flow for Chats
+     */
+    fun getLocalChatsFlow(): Flow<List<Chat>> {
+        return chatDao.getAllChatsFlow().map { entities -> entities.map { it.toChat() } }
+    }
+
+    /**
+     * Local Room Database Flow for Messages
+     */
+    fun getLocalMessagesFlow(chatId: String): Flow<List<Message>> {
+        return messageDao.getMessagesForChatFlow(chatId).map { entities -> entities.map { it.toMessage() } }
+    }
+
+    /**
+     * Sync Chat to both local Room DB and Cloud Firestore
+     */
+    suspend fun syncChatToCloudAndLocal(chat: Chat, participantIds: List<String>) {
+        try {
+            // Save to local Room DB
+            chatDao.insertOrUpdateChat(ChatEntity.fromChat(chat))
+
+            // Sync to Firestore
+            val currentUid = activeUser?.userId ?: ""
+            val currentUsername = activeUser?.username ?: ""
+            val allParticipants = (participantIds + currentUid + currentUsername)
+                .map { it.trim().removePrefix("@").lowercase() }
+                .filter { it.isNotBlank() }
+                .distinct()
+
+            val chatDoc = mapOf(
+                "id" to chat.id,
+                "title" to chat.title,
+                "subtitle" to chat.subtitle,
+                "username" to chat.username,
+                "type" to chat.type.name,
+                "lastMessage" to chat.lastMessage,
+                "lastMessageTime" to chat.lastMessageTime,
+                "participants" to allParticipants,
+                "avatarGradientStart" to chat.avatarGradientStart,
+                "avatarGradientEnd" to chat.avatarGradientEnd,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("chats").document(chat.id).set(chatDoc, SetOptions.merge())
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "syncChatToCloudAndLocal warning: ${e.message}")
+        }
+    }
+
+    /**
+     * Observe User Chats in Firestore (Real-time Cloud Sync + Local Persist)
+     */
+    fun observeUserChats(userId: String, username: String, scope: CoroutineScope): Flow<List<Chat>> = callbackFlow {
+        if (userId.isBlank() && username.isBlank()) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+        val cleanUser = username.trim().removePrefix("@").lowercase()
+        val cleanUid = userId.trim().lowercase()
+        val searchTerms = listOf(cleanUid, cleanUser, "@$cleanUser").filter { it.isNotBlank() }.distinct()
+
+        var reg1: ListenerRegistration? = null
+        try {
+            if (searchTerms.isNotEmpty()) {
+                reg1 = db.collection("chats")
+                    .whereArrayContainsAny("participants", searchTerms)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            Log.w("FirebaseChatRepo", "observeUserChats error: ${error.message}")
+                            return@addSnapshotListener
+                        }
+                        val chats = snapshot?.documents?.mapNotNull { doc ->
+                            val id = doc.getString("id") ?: doc.id
+                            val participants = (doc.get("participants") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+                            val title = doc.getString("title") ?: "Chat"
+                            val subtitle = doc.getString("subtitle") ?: "Paul Cloud"
+                            val lastMsg = doc.getString("lastMessage") ?: ""
+                            val lastTime = doc.getString("lastMessageTime") ?: ""
+                            val rawType = doc.getString("type") ?: ChatType.DIRECT.name
+                            val cType = try { ChatType.valueOf(rawType) } catch (e: Exception) { ChatType.DIRECT }
+                            val rawUser = doc.getString("username") ?: ""
+                            val partnerUser = participants.firstOrNull { it != cleanUid && it != cleanUser && it != "@$cleanUser" } ?: rawUser
+
+                            Chat(
+                                id = id,
+                                title = title,
+                                subtitle = subtitle,
+                                username = if (partnerUser.startsWith("@")) partnerUser else "@$partnerUser",
+                                type = cType,
+                                lastMessage = lastMsg,
+                                lastMessageTime = lastTime,
+                                isCloudSynced = true,
+                                avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
+                                avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2
+                            )
+                        } ?: emptyList()
+
+                        // Save chats to local Room DB
+                        if (chats.isNotEmpty()) {
+                            scope.launch(Dispatchers.IO) {
+                                chatDao.insertOrUpdateChats(chats.map { ChatEntity.fromChat(it) })
+                            }
+                        }
+
+                        trySend(chats)
+                    }
+            }
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "observeUserChats exception: ${e.message}")
+        }
+        awaitClose { reg1?.remove() }
+    }
+
+    /**
+     * Real-time Messages for a Chat (Cloud Firestore + Local Room DB)
+     */
+    fun observeRealtimeMessages(chatId: String, scope: CoroutineScope): Flow<List<Message>> = callbackFlow {
         var registration: ListenerRegistration? = null
         try {
             registration = db.collection("chats").document(chatId).collection("messages")
@@ -370,6 +514,14 @@ class FirebaseChatRepository(private val context: Context) {
                     val msgs = snapshot?.documents?.mapNotNull { doc ->
                         doc.toObject(Message::class.java)
                     } ?: emptyList()
+
+                    // Save incoming cloud messages into local Room disk
+                    if (msgs.isNotEmpty()) {
+                        scope.launch(Dispatchers.IO) {
+                            messageDao.insertOrUpdateMessages(msgs.map { MessageEntity.fromMessage(it) })
+                        }
+                    }
+
                     trySend(msgs)
                 }
         } catch (e: Exception) {
@@ -378,11 +530,146 @@ class FirebaseChatRepository(private val context: Context) {
         awaitClose { registration?.remove() }
     }
 
-    fun syncMessage(chatId: String, message: Message) {
+    /**
+     * Sync Message to both local Room DB and Cloud Firestore
+     */
+    fun syncMessage(chatId: String, message: Message, scope: CoroutineScope) {
+        // 1. Immediately save message to local Room DB on disk
+        scope.launch(Dispatchers.IO) {
+            try {
+                messageDao.insertOrUpdateMessage(MessageEntity.fromMessage(message))
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Error saving message to Room DB: ${e.message}")
+            }
+        }
+
+        // 2. Sync to Cloud Firestore
         try {
             db.collection("chats").document(chatId).collection("messages").document(message.id).set(message)
+            
+            // Also update last message on the chat document in Firestore
+            val chatUpdates = mapOf(
+                "lastMessage" to if (message.isViewOnce) "🔒 Mensaje de lectura única" else message.text,
+                "lastMessageTime" to message.timestamp,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("chats").document(chatId).set(chatUpdates, SetOptions.merge())
         } catch (e: Exception) {
             Log.w("FirebaseChatRepo", "syncMessage error: ${e.message}")
+        }
+    }
+
+    /**
+     * Cloud Backup and Restore (WhatsApp-style)
+     */
+    suspend fun createCloudBackup(): Result<Unit> {
+        val currentUid = activeUser?.userId ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        return try {
+            val localChats = chatDao.getAllChats()
+            val localMsgs = messageDao.getAllMessages()
+
+            val backupData = mapOf(
+                "userId" to currentUid,
+                "backupTimestamp" to System.currentTimeMillis(),
+                "chatsCount" to localChats.size,
+                "messagesCount" to localMsgs.size,
+                "chats" to localChats,
+                "messages" to localMsgs
+            )
+
+            db.collection("users").document(currentUid).collection("backups").document("latest_backup")
+                .set(backupData)
+                .await()
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error creating backup: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun restoreCloudBackup(): Result<Int> {
+        val currentUid = activeUser?.userId ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        return try {
+            val doc = db.collection("users").document(currentUid).collection("backups").document("latest_backup")
+                .get()
+                .await()
+
+            if (!doc.exists()) {
+                return Result.failure(IllegalStateException("No se encontró ninguna copia de seguridad en la nube."))
+            }
+
+            val rawChats = doc.get("chats") as? List<Map<String, Any>> ?: emptyList()
+            val rawMsgs = doc.get("messages") as? List<Map<String, Any>> ?: emptyList()
+
+            // Restore into Room database
+            var restoredCount = 0
+            for (rawChat in rawChats) {
+                val chatId = rawChat["id"] as? String ?: continue
+                val entity = ChatEntity(
+                    id = chatId,
+                    title = rawChat["title"] as? String ?: "Chat",
+                    subtitle = rawChat["subtitle"] as? String ?: "",
+                    username = rawChat["username"] as? String ?: "",
+                    type = rawChat["type"] as? String ?: ChatType.DIRECT.name,
+                    lastMessage = rawChat["lastMessage"] as? String ?: "",
+                    lastMessageTime = rawChat["lastMessageTime"] as? String ?: "",
+                    unreadCount = (rawChat["unreadCount"] as? Long)?.toInt() ?: 0,
+                    isOnline = rawChat["isOnline"] as? Boolean ?: false,
+                    isPinned = rawChat["isPinned"] as? Boolean ?: false,
+                    isMuted = rawChat["isMuted"] as? Boolean ?: false,
+                    isVerified = rawChat["isVerified"] as? Boolean ?: false,
+                    isEncrypted = rawChat["isEncrypted"] as? Boolean ?: false,
+                    isCloudSynced = rawChat["isCloudSynced"] as? Boolean ?: true,
+                    isBlocked = rawChat["isBlocked"] as? Boolean ?: false,
+                    encryptionKeyFingerprint = rawChat["encryptionKeyFingerprint"] as? String,
+                    contactPhone = rawChat["contactPhone"] as? String,
+                    typingStatus = rawChat["typingStatus"] as? String,
+                    memberCount = (rawChat["memberCount"] as? Long)?.toInt(),
+                    avatarGradientStart = rawChat["avatarGradientStart"] as? Long ?: 0xFF2AABEE,
+                    avatarGradientEnd = rawChat["avatarGradientEnd"] as? Long ?: 0xFF1976D2,
+                    pinnedMessageText = rawChat["pinnedMessageText"] as? String
+                )
+                chatDao.insertOrUpdateChat(entity)
+                restoredCount++
+            }
+
+            for (rawMsg in rawMsgs) {
+                val msgId = rawMsg["id"] as? String ?: continue
+                val chatId = rawMsg["chatId"] as? String ?: continue
+                val msgEntity = MessageEntity(
+                    id = msgId,
+                    chatId = chatId,
+                    text = rawMsg["text"] as? String ?: "",
+                    timestamp = rawMsg["timestamp"] as? String ?: "",
+                    isOutgoing = rawMsg["isOutgoing"] as? Boolean ?: false,
+                    senderName = rawMsg["senderName"] as? String,
+                    senderAvatarGradient = rawMsg["senderAvatarGradient"] as? Long,
+                    status = rawMsg["status"] as? String ?: "READ",
+                    type = rawMsg["type"] as? String ?: "TEXT",
+                    isEncrypted = rawMsg["isEncrypted"] as? Boolean ?: false,
+                    isViewOnce = rawMsg["isViewOnce"] as? Boolean ?: false,
+                    hasBeenViewed = rawMsg["hasBeenViewed"] as? Boolean ?: false,
+                    forwardedFrom = rawMsg["forwardedFrom"] as? String,
+                    voiceDurationSeconds = (rawMsg["voiceDurationSeconds"] as? Long)?.toInt(),
+                    photoUrl = rawMsg["photoUrl"] as? String,
+                    videoUrl = rawMsg["videoUrl"] as? String,
+                    fileUrl = rawMsg["fileUrl"] as? String,
+                    fileName = rawMsg["fileName"] as? String,
+                    fileSize = rawMsg["fileSize"] as? String,
+                    contactName = rawMsg["contactName"] as? String,
+                    contactPhone = rawMsg["contactPhone"] as? String,
+                    contactUsername = rawMsg["contactUsername"] as? String,
+                    gifUrl = rawMsg["gifUrl"] as? String,
+                    stickerEmoji = rawMsg["stickerEmoji"] as? String
+                )
+                messageDao.insertOrUpdateMessage(msgEntity)
+            }
+
+            Result.success(restoredCount)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error restoring backup: ${e.message}", e)
+            Result.failure(e)
         }
     }
 
@@ -612,9 +899,16 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     /**
-     * Contact persistence in Firestore (users/{userId}/saved_contacts)
+     * Local Room Flow for Saved Contacts
      */
-    fun observeSavedContacts(userId: String): Flow<List<SavedContact>> = callbackFlow {
+    fun getLocalContactsFlow(): Flow<List<SavedContact>> {
+        return contactDao.getAllContactsFlow().map { entities -> entities.map { it.toSavedContact() } }
+    }
+
+    /**
+     * Contact persistence in Firestore and Room DB (users/{userId}/saved_contacts)
+     */
+    fun observeSavedContacts(userId: String, scope: CoroutineScope): Flow<List<SavedContact>> = callbackFlow {
         if (userId.isBlank()) {
             trySend(emptyList())
             close()
@@ -633,6 +927,13 @@ class FirebaseChatRepository(private val context: Context) {
                     val contacts = snapshot?.documents?.mapNotNull { doc ->
                         doc.toObject(SavedContact::class.java)
                     } ?: emptyList()
+
+                    if (contacts.isNotEmpty()) {
+                        scope.launch(Dispatchers.IO) {
+                            contactDao.insertOrUpdateContacts(contacts.map { ContactEntity.fromSavedContact(it) })
+                        }
+                    }
+
                     trySend(contacts)
                 }
         } catch (e: Exception) {
@@ -642,9 +943,10 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     suspend fun addSavedContact(contactUser: User): Result<Unit> {
-        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        val current = activeUser
+        val safeContactId = contactUser.userId.ifBlank { contactUser.username.removePrefix("@") }.ifBlank { "contact_${UUID.randomUUID().toString().take(8)}" }
         val contact = SavedContact(
-            contactUserId = contactUser.userId,
+            contactUserId = safeContactId,
             displayName = contactUser.name,
             username = contactUser.username,
             email = contactUser.email,
@@ -656,29 +958,47 @@ class FirebaseChatRepository(private val context: Context) {
             isOnline = contactUser.isOnline,
             addedAt = System.currentTimeMillis()
         )
-        return try {
-            db.collection("users").document(current.userId)
-                .collection("saved_contacts").document(contactUser.userId)
-                .set(contact)
-                .await()
-            Result.success(Unit)
+
+        // Always save to local Room DB immediately
+        try {
+            contactDao.insertOrUpdateContact(ContactEntity.fromSavedContact(contact))
         } catch (e: Exception) {
-            Log.e("FirebaseChatRepo", "Error adding contact: ${e.message}", e)
-            Result.failure(e)
+            Log.w("FirebaseChatRepo", "Error saving contact to local Room DB: ${e.message}")
         }
+
+        if (current != null && current.userId.isNotBlank()) {
+            try {
+                db.collection("users").document(current.userId)
+                    .collection("saved_contacts").document(safeContactId)
+                    .set(contact)
+                    .await()
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Error syncing contact to Firestore: ${e.message}")
+            }
+        }
+        return Result.success(Unit)
     }
 
     suspend fun removeSavedContact(contactUserId: String): Result<Unit> {
-        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
-        return try {
-            db.collection("users").document(current.userId)
-                .collection("saved_contacts").document(contactUserId)
-                .delete()
-                .await()
-            Result.success(Unit)
+        val current = activeUser
+
+        try {
+            contactDao.deleteContact(contactUserId)
         } catch (e: Exception) {
-            Result.failure(e)
+            Log.w("FirebaseChatRepo", "Error deleting contact from Room DB: ${e.message}")
         }
+
+        if (current != null && current.userId.isNotBlank()) {
+            try {
+                db.collection("users").document(current.userId)
+                    .collection("saved_contacts").document(contactUserId)
+                    .delete()
+                    .await()
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Error deleting contact from Firestore: ${e.message}")
+            }
+        }
+        return Result.success(Unit)
     }
 
     // ==========================================
@@ -852,6 +1172,236 @@ class FirebaseChatRepository(private val context: Context) {
                 Log.e("Auth", "Fallo en Google Sign-In", e)
                 onAuthError(e.localizedMessage ?: "Error al iniciar sesión")
             }
+        }
+    }
+
+    // ==========================================
+    // ADVANCED GROUPS & RBAC MANAGEMENT
+    // ==========================================
+
+    suspend fun createGroupChat(
+        title: String,
+        description: String,
+        isPublic: Boolean,
+        alias: String,
+        initialMembers: List<User>
+    ): Result<Chat> {
+        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        val groupId = "group_" + UUID.randomUUID().toString().take(10)
+        val cleanAlias = alias.trim().removePrefix("@").lowercase()
+
+        val ownerMember = GroupMember(
+            userId = current.userId,
+            username = current.username,
+            displayName = current.displayName,
+            role = GroupRole.OWNER,
+            customTitle = "Propietario",
+            joinedAt = System.currentTimeMillis()
+        )
+
+        val memberList = mutableListOf(ownerMember)
+        initialMembers.forEach { u ->
+            if (u.userId != current.userId) {
+                memberList.add(
+                    GroupMember(
+                        userId = u.userId,
+                        username = u.username,
+                        displayName = u.displayName,
+                        role = GroupRole.MEMBER,
+                        joinedAt = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+
+        val allParticipants = memberList.map { it.userId.ifBlank { it.username } }.filter { it.isNotBlank() }.distinct()
+
+        val accessConfig = GroupAccessConfig(
+            isPublic = isPublic,
+            publicAlias = if (isPublic && cleanAlias.isNotBlank()) "@$cleanAlias" else "",
+            inviteLink = "https://paul.chat/join/$groupId"
+        )
+
+        val initialGroupConfig = GroupConfig(
+            groupId = groupId,
+            description = description.ifBlank { "Grupo oficial en Paul Messenger" },
+            ownerId = current.userId,
+            members = memberList,
+            accessConfig = accessConfig,
+            auditLog = listOf(
+                AuditLogEntry(
+                    id = "log_" + UUID.randomUUID().toString().take(6),
+                    adminUserId = current.userId,
+                    adminName = current.displayName,
+                    actionType = "CREATE_GROUP",
+                    description = "Grupo creado por ${current.displayName}"
+                )
+            )
+        )
+
+        val newChat = Chat(
+            id = groupId,
+            title = title.trim(),
+            subtitle = "${memberList.size} miembros • ${if (isPublic) "Público" else "Privado"}",
+            username = if (isPublic && cleanAlias.isNotBlank()) "@$cleanAlias" else "",
+            type = ChatType.GROUP,
+            lastMessage = "Grupo '$title' creado por ${current.displayName}",
+            lastMessageTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()),
+            unreadCount = 0,
+            isOnline = true,
+            isCloudSynced = true,
+            memberCount = memberList.size,
+            avatarGradientStart = 0xFF7C4DFF,
+            avatarGradientEnd = 0xFF536DFE,
+            groupConfig = initialGroupConfig
+        )
+
+        try {
+            // 1. Local Room DB
+            chatDao.insertOrUpdateChat(ChatEntity.fromChat(newChat))
+
+            // 2. Cloud Firestore
+            val chatDoc = mapOf(
+                "id" to newChat.id,
+                "title" to newChat.title,
+                "subtitle" to newChat.subtitle,
+                "username" to newChat.username,
+                "type" to ChatType.GROUP.name,
+                "lastMessage" to newChat.lastMessage,
+                "lastMessageTime" to newChat.lastMessageTime,
+                "participants" to allParticipants,
+                "memberCount" to newChat.memberCount,
+                "avatarGradientStart" to newChat.avatarGradientStart,
+                "avatarGradientEnd" to newChat.avatarGradientEnd,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("chats").document(groupId).set(chatDoc).await()
+            db.collection("chats").document(groupId).collection("group_config").document("config").set(initialGroupConfig).await()
+
+            return Result.success(newChat)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error creating group: ${e.message}", e)
+            return Result.success(newChat) // Local fallback
+        }
+    }
+
+    fun observeGroupConfig(groupId: String): Flow<GroupConfig?> = callbackFlow {
+        if (groupId.isBlank()) {
+            trySend(null)
+            close()
+            return@callbackFlow
+        }
+
+        var registration: ListenerRegistration? = null
+        try {
+            registration = db.collection("chats").document(groupId)
+                .collection("group_config").document("config")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w("FirebaseChatRepo", "Error observing group config: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    val config = snapshot?.toObject(GroupConfig::class.java)
+                    trySend(config)
+                }
+        } catch (e: Exception) {
+            Log.w("FirebaseChatRepo", "observeGroupConfig exception: ${e.message}")
+        }
+        awaitClose { registration?.remove() }
+    }
+
+    suspend fun saveGroupConfig(config: GroupConfig): Result<Unit> {
+        return try {
+            db.collection("chats").document(config.groupId)
+                .collection("group_config").document("config")
+                .set(config)
+                .await()
+
+            // Update participant list and member count on main chat document
+            val currentUids = config.members.map { it.userId.ifBlank { it.username } }.filter { it.isNotBlank() }
+            val updates = mapOf(
+                "participants" to currentUids,
+                "memberCount" to config.members.size,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("chats").document(config.groupId).set(updates, SetOptions.merge()).await()
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("FirebaseChatRepo", "Error saving group config: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun banUserFromGroup(groupId: String, targetUserId: String, massDeleteMessages: Boolean): Result<Unit> {
+        val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
+        try {
+            val doc = db.collection("chats").document(groupId)
+                .collection("group_config").document("config").get().await()
+            val config = doc.toObject(GroupConfig::class.java) ?: return Result.failure(IllegalStateException("Configuración de grupo no encontrada"))
+
+            val updatedMembers = config.members.filterNot { it.userId == targetUserId || it.username == targetUserId }
+            val updatedBanned = (config.bannedUserIds + targetUserId).distinct()
+            val newAudit = config.auditLog + AuditLogEntry(
+                id = "log_" + UUID.randomUUID().toString().take(6),
+                adminUserId = current.userId,
+                adminName = current.displayName,
+                actionType = "BAN_USER",
+                description = "Usuario $targetUserId baneado por ${current.displayName}",
+                targetUserId = targetUserId
+            )
+
+            val newConfig = config.copy(members = updatedMembers, bannedUserIds = updatedBanned, auditLog = newAudit)
+            saveGroupConfig(newConfig)
+
+            if (massDeleteMessages) {
+                val msgs = db.collection("chats").document(groupId).collection("messages")
+                    .whereEqualTo("senderId", targetUserId)
+                    .get()
+                    .await()
+                for (m in msgs.documents) {
+                    m.reference.delete()
+                }
+            }
+            return Result.success(Unit)
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+    }
+
+    suspend fun pinMessageInChat(chatId: String, messageId: String, pin: Boolean): Result<Unit> {
+        return try {
+            db.collection("chats").document(chatId)
+                .collection("messages").document(messageId)
+                .update("isPinned", pin)
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteLocalMessage(messageId: String) {
+        try {
+            messageDao.deleteMessage(messageId)
+        } catch (e: Exception) {
+            Log.w("Repository", "Delete local message error: ${e.message}")
+        }
+    }
+
+    suspend fun clearMessagesForChat(chatId: String) {
+        try {
+            messageDao.deleteMessagesForChat(chatId)
+        } catch (e: Exception) {
+            Log.w("Repository", "Clear local messages error: ${e.message}")
+        }
+    }
+
+    suspend fun saveAuditLog(entry: AuditLogEntry) {
+        try {
+            db.collection("audit_logs").document(entry.id).set(entry).await()
+        } catch (e: Exception) {
+            Log.w("Repository", "Save audit log error: ${e.message}")
         }
     }
 

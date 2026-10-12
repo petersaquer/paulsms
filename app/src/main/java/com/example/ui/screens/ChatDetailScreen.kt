@@ -115,7 +115,17 @@ fun ChatDetailScreen(
     onSendPhotoMessage: (photoUrl: String, caption: String) -> Unit = { _, _ -> },
     onSendVideoMessage: (videoUrl: String, caption: String) -> Unit = { _, _ -> },
     onSendFileMessage: (fileUrl: String, fileName: String, fileSize: String) -> Unit = { _, _, _ -> },
-    onSendContactMessage: (contactName: String, contactPhone: String) -> Unit = { _, _ -> }
+    onSendContactMessage: (contactName: String, contactPhone: String) -> Unit = { _, _ -> },
+    onOpenGroupManagement: () -> Unit = {},
+    onEditMessage: (messageId: String, newText: String) -> Unit = { _, _ -> },
+    onDeleteForMe: (messageId: String) -> Unit = {},
+    onDeleteForEveryone: (messageId: String) -> Unit = {},
+    onToggleStar: (messageId: String) -> Unit = {},
+    onForwardMessage: (sourceMsg: Message, targetChatId: String, keepAuthor: Boolean) -> Unit = { _, _, _ -> },
+    onSetDisappearingTimer: (seconds: Int) -> Unit = {},
+    onToggleChatLock: (pin: String) -> Unit = {},
+    onReportUser: (reason: String) -> Unit = {},
+    onToggleArchive: () -> Unit = {}
 ) {
     var isSearchingInChat by remember { mutableStateOf(false) }
     var searchChatQuery by remember { mutableStateOf("") }
@@ -127,6 +137,14 @@ fun ChatDetailScreen(
     var viewingIsVideo by remember { mutableStateOf(false) }
     var viewingMediaCaption by remember { mutableStateOf<String?>(null) }
     var viewingContact by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    // Dual Chat 1-on-1 Dialog states
+    var editingMessage by remember { mutableStateOf<Message?>(null) }
+    var forwardingMessage by remember { mutableStateOf<Message?>(null) }
+    var showDisappearingDialog by remember { mutableStateOf(false) }
+    var showChatLockDialog by remember { mutableStateOf(false) }
+    var showStarredSheet by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -430,11 +448,48 @@ fun ChatDetailScreen(
                                 expanded = showMenu,
                                 onDismissRequest = { showMenu = false }
                             ) {
+                                if (chat.type == com.example.data.model.ChatType.GROUP) {
+                                    DropdownMenuItem(
+                                        text = { Text("Ajustes del Grupo / RBAC", fontWeight = FontWeight.Bold, color = TelegramBlue) },
+                                        onClick = {
+                                            showMenu = false
+                                            onOpenGroupManagement()
+                                        }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Buscar en el chat") },
                                     onClick = {
                                         showMenu = false
                                         isSearchingInChat = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("⏳ Mensajes temporales (Autodestrucción)") },
+                                    onClick = {
+                                        showMenu = false
+                                        showDisappearingDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (chat.isLocked) "🔓 Desbloquear chat (PIN)" else "🔒 Bloquear chat (PIN)") },
+                                    onClick = {
+                                        showMenu = false
+                                        showChatLockDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("⭐ Mensajes destacados") },
+                                    onClick = {
+                                        showMenu = false
+                                        showStarredSheet = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (chat.isArchived) "📂 Desarchivar chat" else "📂 Archivar chat") },
+                                    onClick = {
+                                        showMenu = false
+                                        onToggleArchive()
                                     }
                                 )
                                 DropdownMenuItem(
@@ -463,6 +518,13 @@ fun ChatDetailScreen(
                                     onClick = {
                                         showMenu = false
                                         onClearChat()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("🚩 Reportar usuario", color = Color.Red) },
+                                    onClick = {
+                                        showMenu = false
+                                        showReportDialog = true
                                     }
                                 )
                             }
@@ -649,7 +711,13 @@ fun ChatDetailScreen(
                         },
                         onOpenContact = { name, phone ->
                             viewingContact = name to phone
-                        }
+                        },
+                        onEditMessage = { msg -> editingMessage = msg },
+                        onDeleteForMe = { msg -> onDeleteForMe(msg.id) },
+                        onDeleteForEveryone = { msg -> onDeleteForEveryone(msg.id) },
+                        onToggleStar = { msg -> onToggleStar(msg.id) },
+                        onForwardMessage = { msg -> forwardingMessage = msg },
+                        onReportMessage = { _ -> showReportDialog = true }
                     )
                 }
             }
@@ -758,6 +826,240 @@ fun ChatDetailScreen(
             onConfirm = { question, options ->
                 showCreatePollDialog = false
                 onSendPoll(question, options)
+            }
+        )
+    }
+
+    // Edit Message Dialog
+    editingMessage?.let { msg ->
+        var editTxt by remember { mutableStateOf(msg.text) }
+        AlertDialog(
+            onDismissRequest = { editingMessage = null },
+            title = { Text("Editar mensaje", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = editTxt,
+                    onValueChange = { editTxt = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Texto corregido") }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editTxt.isNotBlank()) {
+                            onEditMessage(msg.id, editTxt.trim())
+                            editingMessage = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
+                ) {
+                    Text("Guardar cambios")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingMessage = null }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // Disappearing Messages Timer Dialog
+    if (showDisappearingDialog) {
+        var selectedSecs by remember { mutableIntStateOf(chat.disappearingTimerSeconds) }
+        AlertDialog(
+            onDismissRequest = { showDisappearingDialog = false },
+            title = { Text("Mensajes temporales", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Los nuevos mensajes desaparecerán automáticamente del chat después del tiempo configurado.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    listOf(
+                        0 to "Desactivado",
+                        86400 to "24 horas",
+                        604800 to "7 días",
+                        7776000 to "90 días"
+                    ).forEach { (secs, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedSecs = secs }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = selectedSecs == secs,
+                                onClick = { selectedSecs = secs }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(label, fontWeight = if (selectedSecs == secs) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSetDisappearingTimer(selectedSecs)
+                        showDisappearingDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
+                ) { Text("Aplicar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisappearingDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // Chat Lock Dialog
+    if (showChatLockDialog) {
+        var pinInput by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showChatLockDialog = false },
+            title = { Text(if (chat.isLocked) "Desbloquear Chat" else "Bloquear Chat con PIN", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(if (chat.isLocked) "Ingresa el PIN para quitar la protección de este chat:" else "Ingresa un PIN de 4 dígitos para proteger este chat:", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { if (it.length <= 4) pinInput = it },
+                        label = { Text("PIN de seguridad (4 dígitos)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (pinInput.length == 4 || chat.isLocked) {
+                            onToggleChatLock(pinInput)
+                            showChatLockDialog = false
+                        }
+                    },
+                    enabled = pinInput.length == 4 || chat.isLocked,
+                    colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
+                ) { Text(if (chat.isLocked) "Desbloquear" else "Bloquear Chat") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChatLockDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // Starred Messages Sheet
+    if (showStarredSheet) {
+        val starredMsgs = messages.filter { it.isStarred }
+        AlertDialog(
+            onDismissRequest = { showStarredSheet = false },
+            title = { Text("⭐ Mensajes Destacados (${starredMsgs.size})", fontWeight = FontWeight.Bold) },
+            text = {
+                if (starredMsgs.isEmpty()) {
+                    Text("No tienes mensajes destacados en esta conversación. Manten presionado un mensaje y selecciona 'Destacar'.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().height(260.dp)) {
+                        items(starredMsgs) { sm ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp))
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(sm.text.take(60), modifier = Modifier.weight(1f), fontSize = 13.sp)
+                                IconButton(onClick = { onToggleStar(sm.id) }) {
+                                    Text("⭐")
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStarredSheet = false }) { Text("Cerrar") }
+            }
+        )
+    }
+
+    // Report User Dialog
+    if (showReportDialog) {
+        var reason by remember { mutableStateOf("Spam o mensajes no deseados") }
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            title = { Text("🚩 Reportar Usuario / Abuso", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Selecciona el motivo del reporte. Se enviar la información a la consola de seguridad de Paul Messenger:", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    listOf(
+                        "Spam o mensajes no deseados",
+                        "Acoso o conducta inapropiada",
+                        "Suplantación de identidad",
+                        "Contenido ilegal o peligroso"
+                    ).forEach { r ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { reason = r }
+                                .padding(vertical = 6.dp)
+                        ) {
+                            androidx.compose.material3.RadioButton(selected = reason == r, onClick = { reason = r })
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(r, fontSize = 13.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onReportUser(reason)
+                        showReportDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { Text("Enviar reporte") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReportDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // Forward Message Dialog
+    forwardingMessage?.let { srcMsg ->
+        var targetChatId by remember { mutableStateOf("chat_1") }
+        var keepAuthor by remember { mutableStateOf(true) }
+        AlertDialog(
+            onDismissRequest = { forwardingMessage = null },
+            title = { Text("🔄 Reenviar mensaje", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Reenviar mensaje: \"${srcMsg.text.take(30)}...\"", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(
+                            checked = keepAuthor,
+                            onCheckedChange = { keepAuthor = it }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Conservar autor original (${srcMsg.senderName ?: "Contacto"})", fontSize = 13.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onForwardMessage(srcMsg, chat.id, keepAuthor)
+                        forwardingMessage = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue)
+                ) { Text("Reenviar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { forwardingMessage = null }) { Text("Cancelar") }
             }
         )
     }

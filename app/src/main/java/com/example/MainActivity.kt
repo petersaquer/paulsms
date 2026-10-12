@@ -29,6 +29,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.model.Chat
 import com.example.data.model.StatusType
 import com.example.ui.components.CreateStatusDialog
+import com.example.data.model.GroupConfig
+import com.example.ui.screens.GroupManagementScreen
 import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.ChatDetailScreen
@@ -45,7 +47,8 @@ enum class PaulScreen {
     CHAT_DETAIL,
     SETTINGS,
     ADMIN_PANEL,
-    SEARCH_CONTACTS
+    SEARCH_CONTACTS,
+    GROUP_MANAGEMENT
 }
 
 class MainActivity : ComponentActivity() {
@@ -92,6 +95,7 @@ fun PaulApp(
     val replyingMessage by viewModel.replyingMessage.collectAsStateWithLifecycle()
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsStateWithLifecycle()
     val recordingSeconds by viewModel.recordingSeconds.collectAsStateWithLifecycle()
+    val activeGroupConfigs by viewModel.activeGroupConfigs.collectAsStateWithLifecycle()
 
     val privacyPhone by viewModel.privacyPhone.collectAsStateWithLifecycle()
     val privacyLastSeen by viewModel.privacyLastSeen.collectAsStateWithLifecycle()
@@ -350,7 +354,45 @@ fun PaulApp(
                         },
                         onSendContactMessage = { name, phone ->
                             viewModel.sendContactMessage(chat.id, name, phone)
-                        }
+                        },
+                        onOpenGroupManagement = {
+                            viewModel.observeGroupConfig(chat.id)
+                            currentScreen = PaulScreen.GROUP_MANAGEMENT
+                        },
+                        onEditMessage = { msgId, txt -> viewModel.editMessage(chat.id, msgId, txt) },
+                        onDeleteForMe = { msgId -> viewModel.deleteMessageForMe(chat.id, msgId) },
+                        onDeleteForEveryone = { msgId -> viewModel.deleteMessageForEveryone(chat.id, msgId) },
+                        onToggleStar = { msgId -> viewModel.toggleStarMessage(chat.id, msgId) },
+                        onForwardMessage = { srcMsg, targetId, keepAuthor -> viewModel.forwardMessage(srcMsg, targetId, keepAuthor) },
+                        onSetDisappearingTimer = { secs -> viewModel.setDisappearingTimer(chat.id, secs) },
+                        onToggleChatLock = { pin -> viewModel.toggleChatLock(chat.id, pin) },
+                        onReportUser = { reason -> viewModel.reportUser(chat.id, reason) },
+                        onToggleArchive = { viewModel.toggleArchiveChat(chat.id) }
+                    )
+                } else {
+                    currentScreen = PaulScreen.CHAT_LIST
+                }
+            }
+
+            PaulScreen.GROUP_MANAGEMENT -> {
+                val chat = selectedChat
+                val activeConfig = chat?.id?.let { activeGroupConfigs[it] } ?: chat?.groupConfig ?: GroupConfig(groupId = chat?.id ?: "")
+                if (chat != null) {
+                    BackHandler { currentScreen = PaulScreen.CHAT_DETAIL }
+                    GroupManagementScreen(
+                        chat = chat,
+                        currentUserId = currentUser?.userId ?: "",
+                        groupConfig = activeConfig,
+                        onUpdateGroupConfig = { updatedConfig ->
+                            viewModel.updateGroupConfig(chat.id, updatedConfig)
+                        },
+                        onBanUser = { targetId, massDelete ->
+                            viewModel.banUserFromGroup(chat.id, targetId, massDelete)
+                        },
+                        onUnbanUser = { targetId ->
+                            viewModel.unbanUserFromGroup(chat.id, targetId)
+                        },
+                        onBack = { currentScreen = PaulScreen.CHAT_DETAIL }
                     )
                 } else {
                     currentScreen = PaulScreen.CHAT_LIST
@@ -408,6 +450,18 @@ fun PaulApp(
                             newBio = bio,
                             onComplete = { Toast.makeText(context, "Perfil actualizado", Toast.LENGTH_SHORT).show() },
                             onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+                        )
+                    },
+                    onCreateCloudBackup = {
+                        viewModel.createCloudBackup(
+                            onComplete = { Toast.makeText(context, "☁️ Copia de seguridad guardada en la nube", Toast.LENGTH_SHORT).show() },
+                            onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                        )
+                    },
+                    onRestoreCloudBackup = {
+                        viewModel.restoreCloudBackup(
+                            onComplete = { count -> Toast.makeText(context, "🔄 Copia restaurada ($count chats recuperados)", Toast.LENGTH_SHORT).show() },
+                            onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
                         )
                     },
                     onBack = { currentScreen = PaulScreen.CHAT_LIST }

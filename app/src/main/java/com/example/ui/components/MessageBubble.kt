@@ -70,9 +70,16 @@ fun MessageBubble(
     onOpenMap: (com.example.data.model.LocationData) -> Unit = {},
     onOpenMedia: (url: String, isVideo: Boolean, caption: String?) -> Unit = { _, _, _ -> },
     onOpenContact: (name: String, phone: String) -> Unit = { _, _ -> },
+    onEditMessage: (Message) -> Unit = {},
+    onDeleteForMe: (Message) -> Unit = {},
+    onDeleteForEveryone: (Message) -> Unit = {},
+    onToggleStar: (Message) -> Unit = {},
+    onForwardMessage: (Message) -> Unit = {},
+    onReportMessage: (Message) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showReactionsPicker by remember { mutableStateOf(false) }
+    var showContextMenu by remember { mutableStateOf(false) }
 
     val bubbleColor = if (message.isOutgoing) {
         if (isDarkTheme) DarkBubbleOutgoing else LightBubbleOutgoing
@@ -97,6 +104,66 @@ fun MessageBubble(
         Column(
             horizontalAlignment = if (message.isOutgoing) Alignment.End else Alignment.Start
         ) {
+            // Context Menu Dropdown
+            androidx.compose.material3.DropdownMenu(
+                expanded = showContextMenu,
+                onDismissRequest = { showContextMenu = false }
+            ) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("💬 Responder") },
+                    onClick = {
+                        showContextMenu = false
+                        onReply(message)
+                    }
+                )
+                if (message.isOutgoing && !message.isDeletedForEveryone && message.type == MessageType.TEXT) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("✏️ Editar mensaje") },
+                        onClick = {
+                            showContextMenu = false
+                            onEditMessage(message)
+                        }
+                    )
+                }
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(if (message.isStarred) "⭐ Quitar destacado" else "⭐ Destacar (Favorito)") },
+                    onClick = {
+                        showContextMenu = false
+                        onToggleStar(message)
+                    }
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("🔄 Reenviar") },
+                    onClick = {
+                        showContextMenu = false
+                        onForwardMessage(message)
+                    }
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("🗑️ Eliminar para mí") },
+                    onClick = {
+                        showContextMenu = false
+                        onDeleteForMe(message)
+                    }
+                )
+                if (message.isOutgoing && !message.isDeletedForEveryone) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("🚫 Eliminar para todos", color = Color.Red) },
+                        onClick = {
+                            showContextMenu = false
+                            onDeleteForEveryone(message)
+                        }
+                    )
+                }
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("🚩 Reportar abuso") },
+                    onClick = {
+                        showContextMenu = false
+                        onReportMessage(message)
+                    }
+                )
+            }
+
             // Quick reactions floating bar if tapped
             AnimatedVisibility(
                 visible = showReactionsPicker,
@@ -130,7 +197,9 @@ fun MessageBubble(
                         onDoubleClick = {
                             onReaction(message, "❤️")
                         },
-                        onLongClick = { onReply(message) }
+                        onLongClick = {
+                            showContextMenu = true
+                        }
                     )
             ) {
                 Column(
@@ -138,14 +207,34 @@ fun MessageBubble(
                 ) {
                     // Sender name for group chats
                     if (!message.isOutgoing && !message.senderName.isNullOrBlank()) {
-                        Text(
-                            text = message.senderName,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (message.senderAvatarGradient != null) Color(message.senderAvatarGradient) else TelegramAccent,
-                            fontSize = 12.sp,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(bottom = 3.dp)
-                        )
+                        ) {
+                            Text(
+                                text = if (message.isAnonymous) "Grupo (Anónimo)" else message.senderName,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (message.senderAvatarGradient != null) Color(message.senderAvatarGradient) else TelegramAccent,
+                                fontSize = 12.sp
+                            )
+                            if (!message.userBadge.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(TelegramBlue.copy(alpha = 0.2f))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = message.userBadge,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TelegramBlue
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // Replied-to Quote Preview
@@ -421,25 +510,47 @@ fun MessageBubble(
                                 }
                             }
                             else -> {
-                                Text(
-                                    text = message.text,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 15.sp,
-                                    lineHeight = 20.sp
-                                )
+                                if (message.isDeletedForEveryone) {
+                                    Text(
+                                        text = "🚫 Este mensaje fue eliminado",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 14.sp
+                                    )
+                                } else {
+                                    Text(
+                                        text = message.text,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 15.sp,
+                                        lineHeight = 20.sp
+                                    )
+                                }
                             }
                         }
                     }
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    // Footer: Timestamp & status checkmarks
+                    // Footer: Starred indicator, Edited tag, Timestamp & status checkmarks
                     Row(
                         modifier = Modifier.align(Alignment.End),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
+                        if (message.isStarred) {
+                            Text("⭐", fontSize = 10.sp)
+                        }
+
+                        if (message.isEdited && !message.isDeletedForEveryone) {
+                            Text(
+                                text = "editado",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                fontSize = 10.sp
+                            )
+                        }
+
                         if (message.isEncrypted) {
                             Icon(
                                 imageVector = Icons.Default.Lock,
@@ -456,20 +567,28 @@ fun MessageBubble(
                             fontSize = 11.sp
                         )
 
-                        if (message.isOutgoing) {
+                        if (message.isOutgoing && !message.isDeletedForEveryone) {
                             when (message.status) {
                                 MessageStatus.READ -> {
                                     Icon(
                                         imageVector = Icons.Default.DoneAll,
-                                        contentDescription = "Leído",
+                                        contentDescription = "Leído (Doble check azul)",
                                         tint = TelegramAccent,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                MessageStatus.DELIVERED -> {
+                                    Icon(
+                                        imageVector = Icons.Default.DoneAll,
+                                        contentDescription = "Entregado (Doble check)",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(14.dp)
                                     )
                                 }
                                 MessageStatus.SENT -> {
                                     Icon(
                                         imageVector = Icons.Default.Done,
-                                        contentDescription = "Enviado",
+                                        contentDescription = "Enviado (Un check)",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(13.dp)
                                     )

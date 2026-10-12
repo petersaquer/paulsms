@@ -103,6 +103,8 @@ fun SettingsScreen(
     onToggleNotificationVibration: (Boolean) -> Unit = {},
     onOpenAdminPanel: () -> Unit = {},
     onUpdateProfile: (String, String) -> Unit = { _, _ -> },
+    onCreateCloudBackup: () -> Unit = {},
+    onRestoreCloudBackup: () -> Unit = {},
     onBack: () -> Unit
 ) {
     val user = currentUser
@@ -248,7 +250,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Firebase Cloud Section
+            // Firebase Cloud & Local Backup Section
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                 shape = RoundedCornerShape(12.dp),
@@ -257,11 +259,22 @@ fun SettingsScreen(
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text(if (isFirebaseSignedIn) "Firebase Sincronizado ✅" else "Sincronización en la Nube", fontWeight = FontWeight.Bold)
                     if (!isFirebaseSignedIn) {
+                        Spacer(modifier = Modifier.height(6.dp))
                         Button(onClick = onSignInGoogle, modifier = Modifier.fillMaxWidth()) {
                             Text("Iniciar sesión con Google")
                         }
                     } else {
-                        TextButton(onClick = onSignOutGoogle) { Text("Cerrar Sesión", color = Color.Red) }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = onCreateCloudBackup) {
+                                Text("☁️ Crear Copia", color = TelegramBlue, fontWeight = FontWeight.Bold)
+                            }
+                            TextButton(onClick = onRestoreCloudBackup) {
+                                Text("🔄 Restaurar Copia", color = TelegramBlue, fontWeight = FontWeight.Bold)
+                            }
+                            TextButton(onClick = onSignOutGoogle) {
+                                Text("Cerrar Sesión", color = Color.Red)
+                            }
+                        }
                     }
                 }
             }

@@ -54,6 +54,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import com.example.data.model.GroupMember
 import com.example.data.model.Message
 import com.example.ui.components.EmojiPickerSheet
 import com.example.ui.theme.TelegramAccent
@@ -63,6 +66,8 @@ import com.example.ui.theme.TelegramBlue
 fun ChatInputBar(
     replyingMessage: Message?,
     isBlocked: Boolean = false,
+    isMutedInGroup: Boolean = false,
+    membersForMentions: List<com.example.data.model.GroupMember> = emptyList(),
     onCancelReply: () -> Unit,
     onSendMessage: (text: String, isViewOnce: Boolean) -> Unit,
     onOpenAttachments: () -> Unit,
@@ -79,12 +84,16 @@ fun ChatInputBar(
     var isViewOnce by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
 
+    val mentionQuery = remember(text) {
+        val lastWord = text.substringAfterLast(" ", text)
+        if (lastWord.startsWith("@") && lastWord.length >= 1) lastWord.removePrefix("@") else null
+    }
+
     if (showEmojiPicker) {
         EmojiPickerSheet(
             onDismiss = { showEmojiPicker = false },
             onEmojiSelected = { emoji ->
                 text += emoji
-                // showEmojiPicker = false // Don't close on selection (WhatsApp style)
             }
         )
     }
@@ -99,6 +108,91 @@ fun ChatInputBar(
                 .fillMaxWidth()
                 .navigationBarsPadding()
         ) {
+            // Muted Banner Mode
+            if (isMutedInGroup) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFFFEBEE))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Block,
+                        contentDescription = null,
+                        tint = Color(0xFFC62828),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "No puedes enviar mensajes en este grupo (Silenciado por un Administrador)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFC62828),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                return@Column
+            }
+
+            // Mentions Popup Autocomplete
+            if (mentionQuery != null && membersForMentions.isNotEmpty()) {
+                val filteredMembers = remember(mentionQuery, membersForMentions) {
+                    val special = listOf("@todos", "@admin")
+                    val matchingSpecial = special.filter { it.removePrefix("@").contains(mentionQuery, ignoreCase = true) }
+                    val matchingMembers = membersForMentions.filter {
+                        it.username.contains(mentionQuery, ignoreCase = true) ||
+                                it.displayName.contains(mentionQuery, ignoreCase = true)
+                    }
+                    matchingSpecial to matchingMembers
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
+                    tonalElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth().height(160.dp)
+                ) {
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        items(filteredMembers.first) { spec ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val prefix = text.substringBeforeLast("@")
+                                        text = "$prefix$spec "
+                                    }
+                                    .padding(vertical = 6.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(spec, fontWeight = FontWeight.Bold, color = TelegramBlue, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Mención masiva", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        items(filteredMembers.second) { m ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val prefix = text.substringBeforeLast("@")
+                                        val handle = if (m.username.startsWith("@")) m.username else "@${m.username}"
+                                        text = "$prefix$handle "
+                                    }
+                                    .padding(vertical = 6.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(m.displayName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(m.username, fontSize = 12.sp, color = TelegramBlue)
+                                Spacer(modifier = Modifier.weight(1f))
+                                Text(m.roleLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
             // Blocked Banner Mode
             if (isBlocked) {
                 Row(

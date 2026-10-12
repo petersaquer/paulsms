@@ -21,6 +21,8 @@ import com.example.data.model.StatusPrivacy
 import com.example.data.model.StatusType
 import com.example.data.model.StatusViewer
 import com.example.data.model.User
+import com.example.data.model.GroupConfig
+import com.example.data.model.AuditLogEntry
 import com.example.data.model.UserStatusGroup
 import com.example.data.NotificationHelper
 import com.example.data.repository.FirebaseChatRepository
@@ -161,12 +163,18 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     val isSearchingContacts: StateFlow<Boolean> = _isSearchingContacts.asStateFlow()
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val savedContacts: StateFlow<List<SavedContact>> = _currentUser.flatMapLatest { user ->
-        if (user != null) {
-            repository.observeSavedContacts(user.userId)
-        } else {
-            flowOf(emptyList())
+    val savedContacts: StateFlow<List<SavedContact>> = combine(
+        repository.getLocalContactsFlow(),
+        _currentUser.flatMapLatest { user ->
+            if (user != null && user.userId.isNotBlank()) {
+                repository.observeSavedContacts(user.userId, viewModelScope)
+            } else {
+                flowOf(emptyList())
+            }
         }
+    ) { local, cloud ->
+        val cloudIds = cloud.map { it.contactUserId }.toSet()
+        (local.filterNot { it.contactUserId in cloudIds } + cloud).sortedByDescending { it.addedAt }
     }.catch { emit(emptyList()) }
         .stateIn(
             scope = viewModelScope,
@@ -246,21 +254,58 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     private val _defaultStatusPrivacy = MutableStateFlow(StatusPrivacy.MY_CONTACTS)
     val defaultStatusPrivacy: StateFlow<StatusPrivacy> = _defaultStatusPrivacy.asStateFlow()
 
+    private var cloudChatsJob: Job? = null
+
     init {
         viewModelScope.launch {
             try {
                 _registeredCount.value = repository.getRegisteredUsersCount()
                 _isFirebaseSignedIn.value = repository.isUserSignedIn()
+
+                // 1. Observe local Room DB chats continuously
+                launch {
+                    repository.getLocalChatsFlow().collect { localChats ->
+                        if (localChats.isNotEmpty()) {
+                            _chats.update { currentList ->
+                                val localMap = localChats.associateBy { it.id }
+                                val merged = currentList.map { localMap[it.id] ?: it } +
+                                        localChats.filterNot { lc -> currentList.any { c -> c.id == lc.id } }
+                                merged
+                            }
+                        }
+                    }
+                }
+
+                // 2. If user is signed in, load user and start cloud listener
                 if (repository.isUserSignedIn()) {
                     val user = repository.currentUser
                     _currentUser.value = user
-                    if (user != null && _chats.value.isEmpty()) {
-                        _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                    if (user != null) {
+                        if (_chats.value.isEmpty()) {
+                            _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                        }
+                        observeCloudUserChats(user)
                     }
                 }
                 startGlobalNotificationListener()
             } catch (e: Exception) {
                 Log.w("PaulViewModel", "Safe init exception: ${e.message}")
+            }
+        }
+    }
+
+    private fun observeCloudUserChats(user: User) {
+        cloudChatsJob?.cancel()
+        cloudChatsJob = viewModelScope.launch {
+            repository.observeUserChats(user.userId, user.username, viewModelScope).collect { cloudChats ->
+                if (cloudChats.isNotEmpty()) {
+                    _chats.update { currentList ->
+                        val cloudMap = cloudChats.associateBy { it.id }
+                        val merged = currentList.map { cloudMap[it.id] ?: it } +
+                                cloudChats.filterNot { cc -> currentList.any { c -> c.id == cc.id } }
+                        merged
+                    }
+                }
             }
         }
     }
@@ -296,6 +341,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 _isFirebaseSignedIn.value = true
                 _chats.value = listOf(SampleData.createSavedMessagesChat(user))
                 _registeredCount.value = repository.getRegisteredUsersCount()
+                observeCloudUserChats(user)
                 onComplete()
             }.onFailure {
                 onError(it.localizedMessage ?: "Error al registrar cuenta")
@@ -318,6 +364,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 _currentUser.value = user
                 _isFirebaseSignedIn.value = true
                 _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                observeCloudUserChats(user)
                 onComplete()
             }.onFailure {
                 onError(it.localizedMessage ?: "Error al iniciar sesión")
@@ -332,6 +379,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 _isFirebaseSignedIn.value = true
                 _currentUser.value = user
                 _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                observeCloudUserChats(user)
                 onComplete()
             },
             onAuthError = onError,
@@ -341,6 +389,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut(onComplete: () -> Unit) {
         messagesListenerJob?.cancel()
+        cloudChatsJob?.cancel()
         repository.signOut(viewModelScope) {
             _isFirebaseSignedIn.value = false
             _currentUser.value = null
@@ -464,7 +513,12 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openChatWithUser(user: User) {
-        val existingChat = _chats.value.find { it.username.equals(user.username, ignoreCase = true) }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val targetUid = user.userId.ifEmpty { user.username }
+        val deterministicId = repository.getDirectChatId(currentUid.ifEmpty { currentUsername }, targetUid)
+
+        val existingChat = _chats.value.find { it.id == deterministicId || it.username.equals(user.username, ignoreCase = true) }
         if (existingChat != null) {
             selectChat(existingChat)
         } else {
@@ -472,8 +526,100 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 title = user.name,
                 username = user.username,
                 phone = user.phoneNumber,
-                isFirebase = user.isFirebaseUser
+                isFirebase = true
             )
+        }
+    }
+
+    // ==========================================
+    // ADVANCED GROUPS & RBAC MANAGEMENT
+    // ==========================================
+
+    private val _activeGroupConfigs = MutableStateFlow<Map<String, GroupConfig>>(emptyMap())
+    val activeGroupConfigs: StateFlow<Map<String, GroupConfig>> = _activeGroupConfigs.asStateFlow()
+
+    fun createGroupChat(
+        title: String,
+        description: String,
+        isPublic: Boolean,
+        alias: String,
+        initialMembers: List<User>,
+        onComplete: (Chat) -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val res = repository.createGroupChat(title, description, isPublic, alias, initialMembers)
+            res.onSuccess { newGroupChat ->
+                _chats.update { current -> listOf(newGroupChat) + current.filterNot { it.id == newGroupChat.id } }
+                newGroupChat.groupConfig?.let { cfg ->
+                    _activeGroupConfigs.update { map -> map + (newGroupChat.id to cfg) }
+                }
+                selectChat(newGroupChat)
+                onComplete(newGroupChat)
+            }.onFailure { err ->
+                onError(err.localizedMessage ?: "Error al crear grupo")
+            }
+        }
+    }
+
+    fun observeGroupConfig(groupId: String) {
+        if (groupId.isBlank()) return
+        viewModelScope.launch {
+            repository.observeGroupConfig(groupId).collect { config ->
+                if (config != null) {
+                    _activeGroupConfigs.update { map -> map + (groupId to config) }
+                    _chats.update { list ->
+                        list.map { c ->
+                            if (c.id == groupId) c.copy(
+                                groupConfig = config,
+                                subtitle = "${config.members.size} miembros • ${if (config.accessConfig.isPublic) "Público" else "Privado"}",
+                                memberCount = config.members.size
+                            ) else c
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun updateGroupConfig(groupId: String, newConfig: GroupConfig) {
+        _activeGroupConfigs.update { map -> map + (groupId to newConfig) }
+        _chats.update { list ->
+            list.map { c ->
+                if (c.id == groupId) c.copy(
+                    groupConfig = newConfig,
+                    subtitle = "${newConfig.members.size} miembros • ${if (newConfig.accessConfig.isPublic) "Público" else "Privado"}",
+                    memberCount = newConfig.members.size
+                ) else c
+            }
+        }
+        viewModelScope.launch {
+            repository.saveGroupConfig(newConfig)
+        }
+    }
+
+    fun banUserFromGroup(groupId: String, targetUserId: String, massDeleteMessages: Boolean) {
+        viewModelScope.launch {
+            repository.banUserFromGroup(groupId, targetUserId, massDeleteMessages)
+        }
+    }
+
+    fun unbanUserFromGroup(groupId: String, targetUserId: String) {
+        val currentConfig = _activeGroupConfigs.value[groupId] ?: return
+        val updatedBanned = currentConfig.bannedUserIds.filterNot { it == targetUserId }
+        val newConfig = currentConfig.copy(bannedUserIds = updatedBanned)
+        updateGroupConfig(groupId, newConfig)
+    }
+
+    fun pinMessageInChat(chatId: String, messageId: String, pin: Boolean) {
+        _messages.update { map ->
+            val msgs = map[chatId] ?: emptyList()
+            map + (chatId to msgs.map { m ->
+                if (m.id == messageId) m.copy(isPinned = pin) else m
+            })
+        }
+        viewModelScope.launch {
+            repository.pinMessageInChat(chatId, messageId, pin)
         }
     }
 
@@ -560,10 +706,18 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun replyToStatus(status: StatusItem, replyText: String) {
-        val summary = status.contentText.ifBlank { status.caption }.take(50)
-        val fullText = "💬 Respondió a tu estado: \"$summary\"\n$replyText"
+        val summary = if (status.isText) status.contentText.take(40) else status.caption.ifBlank { "Estado multimedia" }
+        val quotedStatus = Message(
+            id = status.id,
+            text = "📷 Estado: \"$summary\"",
+            photoUrl = if (status.isPhoto || status.isReel) status.mediaUrl else null,
+            senderName = status.displayName,
+            senderUsername = status.username
+        )
 
-        val targetChat = _chats.value.find { it.username.equals(status.username, ignoreCase = true) }
+        val fullText = replyText.ifBlank { "💬 Respondió a tu estado" }
+
+        val targetChat = _chats.value.find { it.username.equals(status.username, ignoreCase = true) || it.id == status.userId }
         val chatId = targetChat?.id ?: run {
             val newId = "contact_" + UUID.randomUUID().toString().take(6)
             val newChat = Chat(
@@ -585,7 +739,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             newId
         }
 
-        sendMessage(chatId, fullText, isViewOnce = false)
+        sendMessage(chatId, fullText, isViewOnce = false, replyingMessage = quotedStatus)
     }
 
     fun openStatusGroup(group: UserStatusGroup, startIndex: Int = 0) {
@@ -642,16 +796,22 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addContactAndOpenChat(title: String, username: String, phone: String, isFirebase: Boolean) {
-        val newId = "contact_" + UUID.randomUUID().toString().take(6)
         val currentUid = _currentUser.value?.userId ?: "local_user"
-        val partnerId = if (isFirebase) username.ifEmpty { phone } else "e2ee_$newId"
-        val fingerprint = if (!isFirebase) "SHA-256 #${newId.uppercase().take(8)}" else null
+        val currentUsername = _currentUser.value?.username ?: ""
+        val partnerId = if (isFirebase) username.ifEmpty { phone } else "secret_user"
+        val fingerprint = if (!isFirebase) "SHA-256 #${UUID.randomUUID().toString().take(8).uppercase()}" else null
+
+        val newId = if (isFirebase) {
+            repository.getDirectChatId(currentUid.ifEmpty { currentUsername }, partnerId)
+        } else {
+            "secret_" + UUID.randomUUID().toString().take(6)
+        }
 
         val newChat = Chat(
             id = newId,
             title = title,
             subtitle = if (isFirebase) "en línea • Paul Cloud" else "🔒 Chat Secreto E2EE",
-            username = username,
+            username = if (username.startsWith("@")) username else if (username.isNotBlank()) "@$username" else "",
             type = if (isFirebase) ChatType.DIRECT else ChatType.SECRET,
             lastMessage = if (isFirebase) "Chat iniciado vía Paul Cloud" else "🔒 Chat Secreto iniciado con cifrado E2EE",
             lastMessageTime = getCurrentTimeString(),
@@ -675,6 +835,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             },
             timestamp = getCurrentTimeString(),
             isOutgoing = false,
+            senderId = partnerId,
+            senderUsername = username,
             senderName = title,
             isEncrypted = !isFirebase,
             status = MessageStatus.READ
@@ -682,6 +844,23 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
         _chats.update { listOf(newChat) + it.filterNot { c -> c.id == newId } }
         _messages.update { it + (newId to listOf(initialWelcomeMessage)) }
+
+        val contactUser = User(
+            userId = partnerId,
+            displayName = title,
+            username = if (username.startsWith("@")) username else if (username.isNotBlank()) "@$username" else "",
+            phoneNumber = phone,
+            bio = if (isFirebase) "Contacto en Paul Cloud" else "Contacto Local Cifrado E2EE",
+            isOnline = isFirebase
+        )
+
+        viewModelScope.launch {
+            repository.addSavedContact(contactUser)
+            if (isFirebase) {
+                repository.syncChatToCloudAndLocal(newChat, listOf(currentUid, currentUsername, username, phone))
+                repository.syncMessage(newId, initialWelcomeMessage, viewModelScope)
+            }
+        }
 
         selectChat(newChat)
     }
@@ -692,22 +871,43 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         messagesListenerJob?.cancel()
 
         if (chat != null) {
+            val currentUid = _currentUser.value?.userId ?: ""
+            val currentUsername = _currentUser.value?.username ?: ""
+
             if (chat.unreadCount > 0) {
                 _chats.update { list ->
                     list.map { if (it.id == chat.id) it.copy(unreadCount = 0) else it }
                 }
             }
 
-            // Real-time Messages Observation for this chat!
-            messagesListenerJob = viewModelScope.launch {
-                repository.observeRealtimeMessages(chat.id).collect { cloudMsgs ->
-                    if (cloudMsgs.isNotEmpty()) {
+            // 1. Observe local messages from Room DB immediately
+            viewModelScope.launch {
+                repository.getLocalMessagesFlow(chat.id).collect { localMsgs ->
+                    if (localMsgs.isNotEmpty()) {
+                        val mapped = localMsgs.map { m ->
+                            m.copy(isOutgoing = m.isOutgoingFor(currentUid, currentUsername))
+                        }
                         _messages.update { currentMap ->
                             val existing = currentMap[chat.id] ?: emptyList()
-                            val cloudMsgIds = cloudMsgs.map { it.id }.toSet()
-                            
-                            // Combine existing (not in cloudMsgs) and all cloudMsgs
-                            val merged = existing.filterNot { it.id in cloudMsgIds } + cloudMsgs
+                            val localIds = mapped.map { it.id }.toSet()
+                            val merged = existing.filterNot { it.id in localIds } + mapped
+                            currentMap + (chat.id to merged.sortedBy { it.timestamp })
+                        }
+                    }
+                }
+            }
+
+            // 2. Real-time Messages Observation for this chat from Cloud Firestore!
+            messagesListenerJob = viewModelScope.launch {
+                repository.observeRealtimeMessages(chat.id, viewModelScope).collect { cloudMsgs ->
+                    if (cloudMsgs.isNotEmpty()) {
+                        val mapped = cloudMsgs.map { m ->
+                            m.copy(isOutgoing = m.isOutgoingFor(currentUid, currentUsername))
+                        }
+                        _messages.update { currentMap ->
+                            val existing = currentMap[chat.id] ?: emptyList()
+                            val cloudMsgIds = mapped.map { it.id }.toSet()
+                            val merged = existing.filterNot { it.id in cloudMsgIds } + mapped
                             currentMap + (chat.id to merged.sortedBy { it.timestamp })
                         }
                     }
@@ -749,16 +949,20 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
     }
 
-    fun sendMessage(chatId: String, text: String, isViewOnce: Boolean = false) {
+    fun sendMessage(chatId: String, text: String, isViewOnce: Boolean = false, replyingMessage: Message? = null) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
 
         val targetChat = _chats.value.find { it.id == chatId }
         if (targetChat?.isBlocked == true) return
 
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
+
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
-        val replying = _replyingMessage.value
+        val replying = replyingMessage ?: _replyingMessage.value
 
         val newMessage = Message(
             id = "msg_" + UUID.randomUUID().toString().take(8),
@@ -766,6 +970,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = trimmed,
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             isEncrypted = isEncrypted,
             replyTo = replying,
             isViewOnce = isViewOnce,
@@ -791,8 +998,21 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
         _replyingMessage.value = null
 
-        // Sync to Firestore in real time!
-        repository.syncMessage(chatId, newMessage)
+        val updatedChat = targetChat?.copy(
+            lastMessage = if (isViewOnce) "🔒 Mensaje de lectura única" else trimmed,
+            lastMessageTime = time
+        ) ?: Chat(
+            id = chatId,
+            title = targetChat?.title ?: "Chat",
+            lastMessage = trimmed,
+            lastMessageTime = time
+        )
+
+        // Sync Chat and Message to local Room DB and Cloud Firestore!
+        viewModelScope.launch {
+            repository.syncChatToCloudAndLocal(updatedChat, listOf(updatedChat.username, targetChat?.contactPhone ?: "", currentUid, currentUsername))
+            repository.syncMessage(chatId, newMessage, viewModelScope)
+        }
 
         viewModelScope.launch {
             delay(500)
@@ -845,6 +1065,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendVoiceMessage(chatId: String, durationSeconds: Int) {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
         val durationFormatted = "%d:%02d".format(durationSeconds / 60, durationSeconds % 60)
@@ -854,6 +1077,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = "🎤 Mensaje de voz ($durationFormatted)",
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.VOICE,
             voiceDurationSeconds = durationSeconds,
             isEncrypted = isEncrypted,
@@ -876,11 +1102,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
     }
 
     fun sendGifMessage(chatId: String, gifTitle: String, gifUrl: String) {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
         val newMessage = Message(
@@ -889,6 +1118,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = "GIF: $gifTitle",
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.GIF,
             gifUrl = gifUrl,
             isEncrypted = isEncrypted,
@@ -911,11 +1143,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
     }
 
     fun sendLocationMessage(chatId: String, location: LocationData) {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
         val isLive = location.isLive
@@ -927,6 +1162,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = if (isLive) "📍 Ubicación en tiempo real" else "📍 ${location.title}",
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = if (isLive) MessageType.LIVE_LOCATION else MessageType.LOCATION,
             locationData = location,
             isEncrypted = isEncrypted,
@@ -949,7 +1187,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
 
         if (isLive) {
             repository.locationHelper.startLiveLocationUpdates(location.liveDurationMinutes) { updatedLoc ->
@@ -965,6 +1203,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendPhotoMessage(chatId: String, photoUrl: String, caption: String = "") {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
 
@@ -974,6 +1215,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = caption.ifBlank { "📷 Foto" },
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.PHOTO,
             photoUrl = photoUrl,
             isEncrypted = isEncrypted,
@@ -989,11 +1233,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             list.map { if (it.id == chatId) it.copy(lastMessage = "📷 Foto", lastMessageTime = time) else it }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
     }
 
     fun sendVideoMessage(chatId: String, videoUrl: String, caption: String = "") {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
 
@@ -1003,6 +1250,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = caption.ifBlank { "🎬 Video / Reel" },
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.VIDEO,
             videoUrl = videoUrl,
             photoUrl = videoUrl,
@@ -1019,11 +1269,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             list.map { if (it.id == chatId) it.copy(lastMessage = "🎬 Video", lastMessageTime = time) else it }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
     }
 
     fun sendFileMessage(chatId: String, fileUrl: String, fileName: String, fileSize: String) {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
 
@@ -1033,6 +1286,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = fileName,
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.FILE,
             fileUrl = fileUrl,
             fileName = fileName,
@@ -1050,11 +1306,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             list.map { if (it.id == chatId) it.copy(lastMessage = "📄 $fileName", lastMessageTime = time) else it }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
     }
 
     fun sendContactMessage(chatId: String, contactName: String, contactPhone: String, contactUsername: String = "") {
         val targetChat = _chats.value.find { it.id == chatId }
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val isEncrypted = targetChat?.isEncrypted ?: (targetChat?.type == ChatType.SECRET)
         val time = getCurrentTimeString()
 
@@ -1064,6 +1323,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = "👤 $contactName",
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.CONTACT,
             contactName = contactName,
             contactPhone = contactPhone,
@@ -1081,10 +1343,13 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             list.map { if (it.id == chatId) it.copy(lastMessage = "👤 Contacto: $contactName", lastMessageTime = time) else it }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
     }
 
     fun sendPoll(chatId: String, question: String, optionTexts: List<String>) {
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
         val time = getCurrentTimeString()
         val options = optionTexts.mapIndexed { idx, title ->
             PollOption(id = idx + 1, text = title, voteCount = 0)
@@ -1103,6 +1368,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             text = "📊 Encuesta: $question",
             timestamp = time,
             isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
             type = MessageType.POLL,
             pollData = pollData,
             status = MessageStatus.READ
@@ -1124,7 +1392,21 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        repository.syncMessage(chatId, newMessage)
+        repository.syncMessage(chatId, newMessage, viewModelScope)
+    }
+
+    fun createCloudBackup(onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.createCloudBackup()
+            res.onSuccess { onComplete() }.onFailure { onError(it.localizedMessage ?: "Error al crear copia de seguridad") }
+        }
+    }
+
+    fun restoreCloudBackup(onComplete: (Int) -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = repository.restoreCloudBackup()
+            res.onSuccess { count -> onComplete(count) }.onFailure { onError(it.localizedMessage ?: "Error al restaurar copia de seguridad") }
+        }
     }
 
     fun votePoll(messageId: String, optionId: Int) {
@@ -1168,7 +1450,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
         updatedChatId?.let { cid ->
             updatedMessage?.let { msg ->
-                repository.syncMessage(cid, msg)
+                repository.syncMessage(cid, msg, viewModelScope)
             }
         }
     }
@@ -1206,7 +1488,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
         updatedChatId?.let { cid ->
             updatedMessage?.let { msg ->
-                repository.syncMessage(cid, msg)
+                repository.syncMessage(cid, msg, viewModelScope)
             }
         }
     }
@@ -1311,9 +1593,160 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSingleMessage(chatId: String, messageId: String) {
+        deleteMessageForMe(chatId, messageId)
+    }
+
+    fun editMessage(chatId: String, messageId: String, newText: String) {
+        val trimmed = newText.trim()
+        if (trimmed.isBlank()) return
+        val editedTime = getCurrentTimeString()
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to list.map {
+                if (it.id == messageId) {
+                    val updated = it.copy(text = trimmed, isEdited = true, editedTimestamp = editedTime)
+                    viewModelScope.launch { repository.syncMessage(chatId, updated, viewModelScope) }
+                    updated
+                } else it
+            })
+        }
+    }
+
+    fun deleteMessageForMe(chatId: String, messageId: String) {
         _messages.update { map ->
             val list = map[chatId] ?: emptyList()
             map + (chatId to list.filterNot { it.id == messageId })
+        }
+        viewModelScope.launch { repository.deleteLocalMessage(messageId) }
+    }
+
+    fun deleteMessageForEveryone(chatId: String, messageId: String) {
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to list.map {
+                if (it.id == messageId) {
+                    val revoked = it.copy(text = "🚫 Este mensaje fue eliminado", isDeletedForEveryone = true)
+                    viewModelScope.launch { repository.syncMessage(chatId, revoked, viewModelScope) }
+                    revoked
+                } else it
+            })
+        }
+    }
+
+    fun toggleStarMessage(chatId: String, messageId: String) {
+        _messages.update { map ->
+            val list = map[chatId] ?: emptyList()
+            map + (chatId to list.map {
+                if (it.id == messageId) {
+                    val updated = it.copy(isStarred = !it.isStarred)
+                    viewModelScope.launch { repository.syncMessage(chatId, updated, viewModelScope) }
+                    updated
+                } else it
+            })
+        }
+    }
+
+    fun forwardMessage(sourceMessage: Message, targetChatId: String, keepAuthor: Boolean) {
+        val currentUid = _currentUser.value?.userId ?: ""
+        val currentUsername = _currentUser.value?.username ?: ""
+        val currentName = _currentUser.value?.displayName ?: "Usuario"
+        val time = getCurrentTimeString()
+
+        val fwdMsg = sourceMessage.copy(
+            id = "msg_" + UUID.randomUUID().toString().take(8),
+            chatId = targetChatId,
+            timestamp = time,
+            isOutgoing = true,
+            senderId = currentUid,
+            senderUsername = currentUsername,
+            senderName = currentName,
+            forwardedFrom = if (keepAuthor) (sourceMessage.senderName ?: sourceMessage.senderUsername.ifEmpty { "Contacto" }) else null,
+            status = MessageStatus.SENT
+        )
+
+        _messages.update { currentMap ->
+            val chatMsgs = currentMap[targetChatId] ?: emptyList()
+            currentMap + (targetChatId to (chatMsgs + fwdMsg))
+        }
+
+        viewModelScope.launch {
+            repository.syncMessage(targetChatId, fwdMsg, viewModelScope)
+        }
+    }
+
+    fun setDisappearingTimer(chatId: String, seconds: Int) {
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(disappearingTimerSeconds = seconds) else it }
+        }
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(disappearingTimerSeconds = seconds) }
+        }
+    }
+
+    fun toggleChatLock(chatId: String, pin: String) {
+        _chats.update { list ->
+            list.map {
+                if (it.id == chatId) {
+                    val newLock = !it.isLocked
+                    it.copy(isLocked = newLock, lockPin = if (newLock) pin else "")
+                } else it
+            }
+        }
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update {
+                val newLock = !(it?.isLocked ?: false)
+                it?.copy(isLocked = newLock, lockPin = if (newLock) pin else "")
+            }
+        }
+    }
+
+    fun setChatMuteDuration(chatId: String, untilTimestamp: Long) {
+        _chats.update { list ->
+            list.map {
+                if (it.id == chatId) it.copy(isMuted = untilTimestamp != 0L, mutedUntilTimestamp = untilTimestamp) else it
+            }
+        }
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(isMuted = untilTimestamp != 0L, mutedUntilTimestamp = untilTimestamp) }
+        }
+    }
+
+    fun toggleArchiveChat(chatId: String) {
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(isArchived = !it.isArchived) else it }
+        }
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.update { it?.copy(isArchived = !(it.isArchived)) }
+        }
+    }
+
+    fun toggleMarkUnread(chatId: String) {
+        _chats.update { list ->
+            list.map { if (it.id == chatId) it.copy(isMarkedUnread = !it.isMarkedUnread) else it }
+        }
+    }
+
+    fun clearChatHistory(chatId: String) {
+        _messages.update { currentMap ->
+            currentMap + (chatId to emptyList())
+        }
+        viewModelScope.launch {
+            repository.clearMessagesForChat(chatId)
+        }
+    }
+
+    fun reportUser(chatId: String, reason: String) {
+        viewModelScope.launch {
+            repository.saveAuditLog(
+                AuditLogEntry(
+                    id = "report_" + UUID.randomUUID().toString().take(6),
+                    adminUserId = _currentUser.value?.userId ?: "local_user",
+                    adminName = _currentUser.value?.displayName ?: "Usuario",
+                    actionType = "REPORT_USER",
+                    description = "Reporte sobre $chatId: $reason",
+                    targetUserId = chatId
+                )
+            )
         }
     }
 
@@ -1338,7 +1771,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 chatList.forEach { chat ->
                     if (!globalListeners.containsKey(chat.id)) {
                         val job = viewModelScope.launch {
-                            repository.observeRealtimeMessages(chat.id).collect { messages ->
+                            repository.observeRealtimeMessages(chat.id, viewModelScope).collect { messages ->
                                 if (messages.isNotEmpty()) {
                                     messages.forEach { msg ->
                                         // If it's a new message, not from me, and not already seen
