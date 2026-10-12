@@ -474,7 +474,8 @@ fun MessageBubble(
                                 VoicePlayer(
                                     durationSeconds = message.voiceDurationSeconds ?: 12,
                                     waveform = message.voiceWaveform,
-                                    isOutgoing = message.isOutgoing
+                                    isOutgoing = message.isOutgoing,
+                                    voiceFilePath = message.voiceFilePath ?: message.fileUrl
                                 )
                             }
                             MessageType.POLL -> {

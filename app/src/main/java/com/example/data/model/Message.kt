@@ -45,6 +45,7 @@ data class Message(
     val expirationTimestamp: Long = 0L,
     val voiceDurationSeconds: Int? = null,
     val voiceWaveform: List<Float>? = null,
+    val voiceFilePath: String? = null,
     val pollData: PollData? = null,
     val locationData: LocationData? = null,
     val photoUrl: String? = null,

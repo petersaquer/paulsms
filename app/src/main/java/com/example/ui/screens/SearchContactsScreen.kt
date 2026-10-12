@@ -391,11 +391,13 @@ fun SearchContactsScreen(
                                     contact = contact,
                                     onDelete = { onDeleteSavedContact(contact.contactUserId) },
                                     onChat = {
-                                        onOpenChatWithContact(
-                                            contact.name,
-                                            contact.username,
-                                            contact.phoneNumber,
-                                            true
+                                        onOpenChat(
+                                            com.example.data.model.User(
+                                                userId = contact.contactUserId,
+                                                displayName = contact.name,
+                                                username = contact.username,
+                                                phoneNumber = contact.phoneNumber
+                                            )
                                         )
                                     }
                                 )
@@ -442,7 +444,7 @@ fun SearchContactsScreen(
                                             deviceContact.name,
                                             "",
                                             deviceContact.phoneNumber,
-                                            false
+                                            true
                                         )
                                     }
                                 )

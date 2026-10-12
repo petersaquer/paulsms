@@ -27,6 +27,7 @@ import com.example.data.model.UserStatusGroup
 import com.example.data.NotificationHelper
 import com.example.data.repository.FirebaseChatRepository
 import com.example.data.sample.SampleData
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +126,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     val notificationVibration: StateFlow<Boolean> = _notificationVibration.asStateFlow()
 
     private val notificationHelper = NotificationHelper(application.applicationContext)
+    private val audioRecorderHelper = com.example.data.AudioRecorderHelper(application.applicationContext)
+    private val currentVoiceWaveform = mutableListOf<Float>()
     private val globalListeners = mutableMapOf<String, Job>()
     private val seenMessageIds = mutableSetOf<String>()
 
@@ -270,7 +273,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                                 val localMap = localChats.associateBy { it.id }
                                 val merged = currentList.map { localMap[it.id] ?: it } +
                                         localChats.filterNot { lc -> currentList.any { c -> c.id == lc.id } }
-                                merged
+                                deduplicateDirectChatsList(merged)
                             }
                         }
                     }
@@ -287,6 +290,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                         observeCloudUserChats(user)
                     }
                 }
+                // Limpieza inicial de chats duplicados existentes
+                _chats.update { deduplicateDirectChatsList(it) }
                 startGlobalNotificationListener()
             } catch (e: Exception) {
                 Log.w("PaulViewModel", "Safe init exception: ${e.message}")
@@ -303,7 +308,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                         val cloudMap = cloudChats.associateBy { it.id }
                         val merged = currentList.map { cloudMap[it.id] ?: it } +
                                 cloudChats.filterNot { cc -> currentList.any { c -> c.id == cc.id } }
-                        merged
+                        deduplicateDirectChatsList(merged)
                     }
                 }
             }
@@ -512,13 +517,187 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openChatWithUser(user: User) {
+    fun normalizeContactName(name: String?): String? {
+        if (name == null) return null
+        val clean = name.trim().lowercase()
+            .removePrefix("contacto ")
+            .removePrefix("contacto: ")
+            .removePrefix("chat con ")
+            .removePrefix("chat ")
+            .replace(Regex("[^a-z0-9áéíóúüñ]"), "")
+        return clean.ifEmpty { null }
+    }
+
+    /**
+     * Busca de manera estricta e inteligente si ya existe un chat 1 a 1 con este usuario/contacto,
+     * siguiendo exactamente la lógica de WhatsApp y Telegram (un solo hilo por persona).
+     */
+    fun findExistingDirectChat(
+        userId: String? = null,
+        username: String? = null,
+        phone: String? = null,
+        title: String? = null
+    ): Chat? {
+        val cleanUser = username?.trim()?.removePrefix("@")?.lowercase()?.ifEmpty { null }
+        val cleanDigits = phone?.filter { it.isDigit() }?.ifEmpty { null }
+        val cleanTitleNorm = normalizeContactName(title)
+        val cleanUid = userId?.trim()?.removePrefix("@")?.lowercase()?.ifEmpty { null }
+
         val currentUid = _currentUser.value?.userId ?: ""
         val currentUsername = _currentUser.value?.username ?: ""
-        val targetUid = user.userId.ifEmpty { user.username }
-        val deterministicId = repository.getDirectChatId(currentUid.ifEmpty { currentUsername }, targetUid)
+        val myId = currentUid.ifEmpty { currentUsername }
 
-        val existingChat = _chats.value.find { it.id == deterministicId || it.username.equals(user.username, ignoreCase = true) }
+        val directIdFromUid = if (cleanUid != null) repository.getDirectChatId(myId, cleanUid) else null
+        val directIdFromUser = if (cleanUser != null) repository.getDirectChatId(myId, cleanUser) else null
+        val directIdFromPhone = if (cleanDigits != null) repository.getDirectChatId(myId, cleanDigits) else null
+
+        return _chats.value.firstOrNull { c ->
+            if (c.type != ChatType.DIRECT && c.type != ChatType.SECRET) return@firstOrNull false
+
+            val cUser = c.username.trim().removePrefix("@").lowercase().ifEmpty { null }
+            val cDigits = c.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
+            val cTitleNorm = normalizeContactName(c.title)
+
+            // 1. Coincidencia por ID determinístico de chat
+            (directIdFromUid != null && (c.id == directIdFromUid || c.id == "secret_$directIdFromUid")) ||
+            (directIdFromUser != null && (c.id == directIdFromUser || c.id == "secret_$directIdFromUser")) ||
+            (directIdFromPhone != null && (c.id == directIdFromPhone || c.id == "secret_$directIdFromPhone")) ||
+            // 2. ID que contenga el identificador del usuario
+            (cleanUid != null && c.id.contains(cleanUid)) ||
+            (cleanUser != null && c.id.contains(cleanUser)) ||
+            // 3. Coincidencia por nombre de usuario (@usuario)
+            (cleanUser != null && cUser != null && cleanUser == cUser) ||
+            // 4. Coincidencia por número de teléfono
+            (cleanDigits != null && cDigits != null && (cleanDigits == cDigits || cleanDigits.takeLast(7) == cDigits.takeLast(7) || cleanDigits.endsWith(cDigits) || cDigits.endsWith(cleanDigits))) ||
+            // 5. Coincidencia por nombre del contacto normalizado (ej: "Juan" == "Contacto Juan")
+            (cleanTitleNorm != null && cTitleNorm != null && (cleanTitleNorm == cTitleNorm || cleanTitleNorm.contains(cTitleNorm) || cTitleNorm.contains(cleanTitleNorm))) ||
+            (cleanTitleNorm != null && cleanTitleNorm.length >= 3 && c.id.contains(cleanTitleNorm))
+        }
+    }
+
+    /**
+     * Normaliza y fusiona chats duplicados de la misma persona (Lógica WhatsApp / Telegram).
+     * Si el usuario abrió varios chats con la misma persona por error, se combinan en uno solo.
+     */
+    private fun deduplicateDirectChatsList(chats: List<Chat>): List<Chat> {
+        if (chats.isEmpty()) return emptyList()
+
+        val result = mutableListOf<Chat>()
+        val directClusters = mutableListOf<MutableList<Chat>>()
+
+        for (chat in chats) {
+            if (chat.type != ChatType.DIRECT && chat.type != ChatType.SECRET) {
+                if (result.none { it.id == chat.id }) {
+                    result.add(chat)
+                }
+            } else {
+                val existingCluster = directClusters.find { cluster ->
+                    cluster.any { other -> isSameDirectContact(chat, other) }
+                }
+                if (existingCluster != null) {
+                    existingCluster.add(chat)
+                } else {
+                    directClusters.add(mutableListOf(chat))
+                }
+            }
+        }
+
+        for (cluster in directClusters) {
+            if (cluster.size == 1) {
+                result.add(cluster.first())
+            } else {
+                // Seleccionar el canónico
+                val canonical = cluster.maxByOrNull { c ->
+                    var score = 0
+                    if (c.id.startsWith("direct_")) score += 100
+                    if (c.isCloudSynced) score += 50
+                    if (c.username.isNotBlank()) score += 20
+                    if (!c.contactPhone.isNullOrBlank()) score += 15
+                    if (c.lastMessage.isNotBlank()) score += 5
+                    score
+                } ?: cluster.first()
+
+                val duplicateIds = cluster.map { it.id }.filter { it != canonical.id }
+                if (duplicateIds.isNotEmpty()) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        mergeDuplicateChatMessages(canonical.id, duplicateIds)
+                    }
+                }
+
+                result.add(canonical)
+            }
+        }
+
+        return result
+    }
+
+    private fun isSameDirectContact(c1: Chat, c2: Chat): Boolean {
+        if (c1.id == c2.id) return true
+
+        val u1 = c1.username.trim().removePrefix("@").lowercase().ifEmpty { null }
+        val u2 = c2.username.trim().removePrefix("@").lowercase().ifEmpty { null }
+        if (u1 != null && u2 != null && u1 == u2) return true
+
+        val p1 = c1.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
+        val p2 = c2.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
+        if (p1 != null && p2 != null) {
+            val minLen = minOf(p1.length, p2.length)
+            if (minLen >= 6 && (p1.takeLast(7) == p2.takeLast(7) || p1 == p2 || p1.endsWith(p2) || p2.endsWith(p1))) return true
+        }
+
+        val t1 = normalizeContactName(c1.title)
+        val t2 = normalizeContactName(c2.title)
+        if (t1 != null && t2 != null && (t1 == t2 || t1.contains(t2) || t2.contains(t1))) {
+            if (u1 == null || u2 == null || u1 == u2) return true
+        }
+
+        if (u1 != null && c2.id.contains(u1)) return true
+        if (u2 != null && c1.id.contains(u2)) return true
+        if (p1 != null && p1.length >= 7 && c2.id.contains(p1.takeLast(7))) return true
+        if (p2 != null && p2.length >= 7 && c1.id.contains(p2.takeLast(7))) return true
+        if (t1 != null && t1.length >= 3 && (c2.id.contains(t1) || c2.title.lowercase().contains(t1))) return true
+        if (t2 != null && t2.length >= 3 && (c1.id.contains(t2) || c1.title.lowercase().contains(t2))) return true
+
+        return false
+    }
+
+    private suspend fun mergeDuplicateChatMessages(canonicalId: String, duplicateIds: List<String>) {
+        try {
+            _messages.update { currentMap ->
+                val canonicalMsgs = currentMap[canonicalId] ?: emptyList()
+                val extraMsgs = duplicateIds.flatMap { currentMap[it] ?: emptyList() }
+                if (extraMsgs.isEmpty()) currentMap
+                else {
+                    val allMerged = (canonicalMsgs + extraMsgs)
+                        .map { it.copy(chatId = canonicalId) }
+                        .distinctBy { it.id }
+                        .sortedBy { it.timestamp }
+                    val cleaned = currentMap.filterKeys { it !in duplicateIds }
+                    cleaned + (canonicalId to allMerged)
+                }
+            }
+
+            for (dupId in duplicateIds) {
+                val dupMsgs = repository.messageDao.getMessagesForChat(dupId)
+                if (dupMsgs.isNotEmpty()) {
+                    val updated = dupMsgs.map { it.copy(chatId = canonicalId) }
+                    repository.messageDao.insertOrUpdateMessages(updated)
+                    repository.messageDao.deleteMessagesForChat(dupId)
+                }
+                repository.chatDao.deleteChat(dupId)
+            }
+        } catch (e: Exception) {
+            Log.w("PaulViewModel", "mergeDuplicateChatMessages warning: ${e.message}")
+        }
+    }
+
+    fun openChatWithUser(user: User) {
+        val existingChat = findExistingDirectChat(
+            userId = user.userId,
+            username = user.username,
+            phone = user.phoneNumber,
+            title = user.name
+        )
         if (existingChat != null) {
             selectChat(existingChat)
         } else {
@@ -526,7 +705,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 title = user.name,
                 username = user.username,
                 phone = user.phoneNumber,
-                isFirebase = true
+                isFirebase = true,
+                userId = user.userId
             )
         }
     }
@@ -717,14 +897,21 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
         val fullText = replyText.ifBlank { "💬 Respondió a tu estado" }
 
-        val targetChat = _chats.value.find { it.username.equals(status.username, ignoreCase = true) || it.id == status.userId }
+        val targetChat = findExistingDirectChat(
+            userId = status.userId,
+            username = status.username,
+            title = status.displayName
+        )
         val chatId = targetChat?.id ?: run {
-            val newId = "contact_" + UUID.randomUUID().toString().take(6)
+            val currentUid = _currentUser.value?.userId ?: ""
+            val currentUsername = _currentUser.value?.username ?: ""
+            val partner = status.username.removePrefix("@").trim().ifEmpty { status.userId }
+            val newId = repository.getDirectChatId(currentUid.ifEmpty { currentUsername }, partner)
             val newChat = Chat(
                 id = newId,
                 title = status.displayName,
                 subtitle = "en línea • Paul Cloud",
-                username = status.username,
+                username = if (status.username.startsWith("@")) status.username else "@${status.username}",
                 type = ChatType.DIRECT,
                 lastMessage = fullText,
                 lastMessageTime = getCurrentTimeString(),
@@ -735,7 +922,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                 avatarGradientStart = status.userAvatarStart,
                 avatarGradientEnd = status.userAvatarEnd
             )
-            _chats.update { listOf(newChat) + it }
+            _chats.update { deduplicateDirectChatsList(listOf(newChat) + it.filterNot { c -> c.id == newId }) }
             newId
         }
 
@@ -795,23 +982,59 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addContactAndOpenChat(title: String, username: String, phone: String, isFirebase: Boolean) {
+    fun addContactAndOpenChat(
+        title: String,
+        username: String,
+        phone: String,
+        isFirebase: Boolean,
+        userId: String? = null
+    ) {
+        // 1. Verificar primero si ya existe un chat con esta persona (evita duplicar chats estilo WhatsApp/Telegram)
+        val existing = findExistingDirectChat(
+            userId = userId,
+            username = username,
+            phone = phone,
+            title = title
+        )
+        if (existing != null) {
+            selectChat(existing)
+            return
+        }
+
         val currentUid = _currentUser.value?.userId ?: "local_user"
         val currentUsername = _currentUser.value?.username ?: ""
-        val partnerId = if (isFirebase) username.ifEmpty { phone } else "secret_user"
+        val cleanUser = username.trim().removePrefix("@").lowercase()
+        val cleanDigits = phone.filter { it.isDigit() }
+        val normTitle = normalizeContactName(title)
+
+        val partnerId = userId?.trim()?.ifEmpty { null }
+            ?: cleanUser.ifEmpty { null }
+            ?: cleanDigits.ifEmpty { null }
+            ?: normTitle?.ifEmpty { null }
+            ?: "contact"
+
         val fingerprint = if (!isFirebase) "SHA-256 #${UUID.randomUUID().toString().take(8).uppercase()}" else null
 
-        val newId = if (isFirebase) {
-            repository.getDirectChatId(currentUid.ifEmpty { currentUsername }, partnerId)
-        } else {
-            "secret_" + UUID.randomUUID().toString().take(6)
+        val deterministicId = repository.getDirectChatId(
+            currentUid.ifEmpty { currentUsername }.ifEmpty { "me" },
+            partnerId
+        )
+        val newId = if (isFirebase) deterministicId else "secret_$deterministicId"
+
+        // 2. Verificar nuevamente por el ID determinístico calculado
+        val existingById = _chats.value.find { it.id == newId || it.id == deterministicId || it.id == "secret_$deterministicId" }
+        if (existingById != null) {
+            selectChat(existingById)
+            return
         }
+
+        val formattedUsername = if (cleanUser.isNotBlank()) "@$cleanUser" else ""
 
         val newChat = Chat(
             id = newId,
-            title = title,
+            title = title.ifBlank { if (formattedUsername.isNotBlank()) formattedUsername else "Contacto" },
             subtitle = if (isFirebase) "en línea • Paul Cloud" else "🔒 Chat Secreto E2EE",
-            username = if (username.startsWith("@")) username else if (username.isNotBlank()) "@$username" else "",
+            username = formattedUsername,
             type = if (isFirebase) ChatType.DIRECT else ChatType.SECRET,
             lastMessage = if (isFirebase) "Chat iniciado vía Paul Cloud" else "🔒 Chat Secreto iniciado con cifrado E2EE",
             lastMessageTime = getCurrentTimeString(),
@@ -836,19 +1059,22 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             timestamp = getCurrentTimeString(),
             isOutgoing = false,
             senderId = partnerId,
-            senderUsername = username,
+            senderUsername = formattedUsername,
             senderName = title,
             isEncrypted = !isFirebase,
             status = MessageStatus.READ
         )
 
-        _chats.update { listOf(newChat) + it.filterNot { c -> c.id == newId } }
-        _messages.update { it + (newId to listOf(initialWelcomeMessage)) }
+        _chats.update { deduplicateDirectChatsList(listOf(newChat) + it.filterNot { c -> c.id == newId }) }
+        _messages.update { current ->
+            if (current[newId].isNullOrEmpty()) current + (newId to listOf(initialWelcomeMessage))
+            else current
+        }
 
         val contactUser = User(
             userId = partnerId,
             displayName = title,
-            username = if (username.startsWith("@")) username else if (username.isNotBlank()) "@$username" else "",
+            username = formattedUsername,
             phoneNumber = phone,
             bio = if (isFirebase) "Contacto en Paul Cloud" else "Contacto Local Cifrado E2EE",
             isOnline = isFirebase
@@ -857,7 +1083,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.addSavedContact(contactUser)
             if (isFirebase) {
-                repository.syncChatToCloudAndLocal(newChat, listOf(currentUid, currentUsername, username, phone))
+                repository.syncChatToCloudAndLocal(newChat, listOf(currentUid, currentUsername, cleanUser, phone))
                 repository.syncMessage(newId, initialWelcomeMessage, viewModelScope)
             }
         }
@@ -1038,13 +1264,25 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startVoiceRecording() {
         if (_isRecordingVoice.value) return
+        val file = audioRecorderHelper.startRecording()
+        if (file == null) {
+            Log.e("PaulViewModel", "No se pudo iniciar AudioRecorder")
+            return
+        }
+
         _isRecordingVoice.value = true
         _recordingSeconds.value = 0
+        currentVoiceWaveform.clear()
         recordingTimerJob?.cancel()
         recordingTimerJob = viewModelScope.launch {
             while (_isRecordingVoice.value) {
-                delay(1000)
-                _recordingSeconds.update { it + 1 }
+                delay(100)
+                val amp = audioRecorderHelper.getMaxAmplitude()
+                val normalizedAmp = (amp / 32767f).coerceIn(0.15f, 1.0f)
+                currentVoiceWaveform.add(normalizedAmp)
+                if (currentVoiceWaveform.size % 10 == 0) {
+                    _recordingSeconds.update { it + 1 }
+                }
             }
         }
     }
@@ -1053,17 +1291,37 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         _isRecordingVoice.value = false
         _recordingSeconds.value = 0
         recordingTimerJob?.cancel()
+        audioRecorderHelper.cancelRecording()
+        currentVoiceWaveform.clear()
     }
 
     fun stopVoiceRecordingAndSend(chatId: String) {
         val seconds = _recordingSeconds.value
-        cancelVoiceRecording()
-        if (seconds >= 1) {
-            sendVoiceMessage(chatId, seconds)
+        _isRecordingVoice.value = false
+        _recordingSeconds.value = 0
+        recordingTimerJob?.cancel()
+
+        val recordedFile = audioRecorderHelper.stopRecording()
+        val waveformSample = if (currentVoiceWaveform.isNotEmpty()) {
+            val step = (currentVoiceWaveform.size / 14).coerceAtLeast(1)
+            currentVoiceWaveform.filterIndexed { index, _ -> index % step == 0 }.take(14)
+        } else null
+        currentVoiceWaveform.clear()
+
+        if (seconds >= 1 && recordedFile != null && recordedFile.exists() && recordedFile.length() > 0) {
+            sendVoiceMessage(chatId, seconds, recordedFile.absolutePath, waveformSample)
+        } else if (seconds >= 1) {
+            // Si el hardware no pudo escribir el archivo, enviar con fallback de audio sintetizado
+            sendVoiceMessage(chatId, seconds, null, waveformSample)
         }
     }
 
-    fun sendVoiceMessage(chatId: String, durationSeconds: Int) {
+    fun sendVoiceMessage(
+        chatId: String,
+        durationSeconds: Int,
+        filePath: String? = null,
+        waveform: List<Float>? = null
+    ) {
         val targetChat = _chats.value.find { it.id == chatId }
         val currentUid = _currentUser.value?.userId ?: ""
         val currentUsername = _currentUser.value?.username ?: ""
@@ -1082,6 +1340,9 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             senderName = currentName,
             type = MessageType.VOICE,
             voiceDurationSeconds = durationSeconds,
+            voiceWaveform = waveform,
+            fileUrl = filePath,
+            voiceFilePath = filePath,
             isEncrypted = isEncrypted,
             status = MessageStatus.SENT
         )
@@ -1102,7 +1363,20 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        repository.syncMessage(chatId, newMessage, viewModelScope)
+        val updatedChat = targetChat?.copy(
+            lastMessage = "🎤 Mensaje de voz ($durationFormatted)",
+            lastMessageTime = time
+        ) ?: Chat(
+            id = chatId,
+            title = targetChat?.title ?: "Chat",
+            lastMessage = "🎤 Mensaje de voz ($durationFormatted)",
+            lastMessageTime = time
+        )
+
+        viewModelScope.launch {
+            repository.syncChatToCloudAndLocal(updatedChat, listOf(updatedChat.username, targetChat?.contactPhone ?: "", currentUid, currentUsername))
+            repository.syncMessage(chatId, newMessage, viewModelScope)
+        }
     }
 
     fun sendGifMessage(chatId: String, gifTitle: String, gifUrl: String) {
@@ -1514,6 +1788,24 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createNewChat(title: String, type: ChatType, description: String) {
+        if (type == ChatType.DIRECT) {
+            val existing = findExistingDirectChat(
+                username = title,
+                title = title
+            )
+            if (existing != null) {
+                selectChat(existing)
+                return
+            }
+            addContactAndOpenChat(
+                title = title,
+                username = if (title.startsWith("@")) title else "",
+                phone = if (title.filter { it.isDigit() }.length >= 6) title else "",
+                isFirebase = true
+            )
+            return
+        }
+
         val newId = "chat_" + UUID.randomUUID().toString().take(6)
         val time = getCurrentTimeString()
         val newChat = Chat(

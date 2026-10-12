@@ -124,6 +124,18 @@ fun PaulApp(
         }
     }
 
+    // Audio recording permission request (Permiso de micrófono en tiempo de ejecución)
+    val recordAudioPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            Toast.makeText(context, "Permiso de micrófono concedido", Toast.LENGTH_SHORT).show()
+            viewModel.startVoiceRecording()
+        } else {
+            Toast.makeText(context, "Se necesita permiso de micrófono para grabar notas de voz", Toast.LENGTH_LONG).show()
+        }
+    }
+
     var createStatusInitialType by remember { mutableStateOf<StatusType?>(null) }
 
     var currentScreen by remember { mutableStateOf(if (currentUser == null) PaulScreen.AUTH else PaulScreen.CHAT_LIST) }
@@ -335,7 +347,16 @@ fun PaulApp(
                             currentScreen = PaulScreen.CHAT_LIST
                         },
                         onStartVoiceRecording = {
-                            viewModel.startVoiceRecording()
+                            val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                                context,
+                                android.Manifest.permission.RECORD_AUDIO
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                            if (hasMicPermission) {
+                                viewModel.startVoiceRecording()
+                            } else {
+                                recordAudioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            }
                         },
                         onCancelVoiceRecording = {
                             viewModel.cancelVoiceRecording()
