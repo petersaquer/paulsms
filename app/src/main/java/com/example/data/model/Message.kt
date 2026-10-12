@@ -63,7 +63,8 @@ data class Message(
     val topicId: String? = null,
     val isPinned: Boolean = false,
     val isAnonymous: Boolean = false,
-    val userBadge: String? = null
+    val userBadge: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
 ) {
     fun isOutgoingFor(currentUserId: String, currentUsername: String): Boolean {
         val cleanCurrentUid = currentUserId.trim().lowercase()

@@ -53,7 +53,8 @@ data class ChatEntity(
         memberCount = memberCount,
         avatarGradientStart = avatarGradientStart,
         avatarGradientEnd = avatarGradientEnd,
-        pinnedMessageText = pinnedMessageText
+        pinnedMessageText = pinnedMessageText,
+        lastUpdatedTimestamp = updatedAt
     )
 
     companion object {
@@ -79,7 +80,8 @@ data class ChatEntity(
             memberCount = chat.memberCount,
             avatarGradientStart = chat.avatarGradientStart,
             avatarGradientEnd = chat.avatarGradientEnd,
-            pinnedMessageText = chat.pinnedMessageText
+            pinnedMessageText = chat.pinnedMessageText,
+            updatedAt = chat.lastUpdatedTimestamp
         )
     }
 }

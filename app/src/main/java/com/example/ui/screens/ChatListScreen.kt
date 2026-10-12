@@ -458,7 +458,7 @@ fun ChatListScreen(
                                     (chat.contactPhone?.contains(searchQuery, ignoreCase = true) ?: false)
                         }
                         folderMatch && searchMatch
-                    }.sortedByDescending { it.isPinned }
+                    }.sortedWith(compareByDescending<Chat> { it.isPinned }.thenByDescending { it.lastUpdatedTimestamp })
                 }
 
                 if (displayedChats.isEmpty()) {

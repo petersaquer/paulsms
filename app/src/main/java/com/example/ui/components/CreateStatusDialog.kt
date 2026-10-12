@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,6 +29,8 @@ import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -219,14 +222,14 @@ fun CreateStatusDialog(
                         }
                     }
 
-                    // Top Right Tools
-                    if (isTextMode) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Top Right Tools + Explicit Publicar Button
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isTextMode) {
                             IconButton(
                                 onClick = {
                                     selectedFontIndex = (selectedFontIndex + 1) % FONT_STYLES.size
                                 },
-                                modifier = Modifier.size(38.dp)
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.TextFields,
@@ -238,7 +241,7 @@ fun CreateStatusDialog(
                                 onClick = {
                                     selectedColorIndex = (selectedColorIndex + 1) % STATUS_BACKGROUND_PALETTES.size
                                 },
-                                modifier = Modifier.size(38.dp)
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ColorLens,
@@ -246,23 +249,73 @@ fun CreateStatusDialog(
                                     tint = Color.White
                                 )
                             }
-                        }
-                    } else {
-                        IconButton(
-                            onClick = {
-                                statusMediaLauncher.launch(
-                                    androidx.activity.result.PickVisualMediaRequest(
-                                        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                        } else {
+                            IconButton(
+                                onClick = {
+                                    statusMediaLauncher.launch(
+                                        androidx.activity.result.PickVisualMediaRequest(
+                                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                                        )
                                     )
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PhotoLibrary,
+                                    contentDescription = "Galería",
+                                    tint = Color.White
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Button(
+                            onClick = {
+                                if (!isPublishing) {
+                                    isPublishing = true
+                                    val type = if (isTextMode) StatusType.TEXT else StatusType.PHOTO
+                                    onPublish(
+                                        type,
+                                        textContent,
+                                        selectedMediaUrl,
+                                        STATUS_BACKGROUND_PALETTES[selectedColorIndex],
+                                        FONT_STYLES[selectedFontIndex].first,
+                                        captionText,
+                                        privacy,
+                                        excludedIds,
+                                        includedIds
+                                    )
+                                }
                             },
-                            modifier = Modifier.size(38.dp)
+                            enabled = !isPublishing && (!isTextMode || textContent.isNotBlank()),
+                            shape = RoundedCornerShape(20.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = TelegramAccent,
+                                contentColor = Color.White,
+                                disabledContainerColor = TelegramAccent.copy(alpha = 0.4f),
+                                disabledContentColor = Color.White.copy(alpha = 0.6f)
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("top_bar_publish_status_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.PhotoLibrary,
-                                contentDescription = "Galería",
-                                tint = Color.White
-                            )
+                            if (isPublishing) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Publicar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }

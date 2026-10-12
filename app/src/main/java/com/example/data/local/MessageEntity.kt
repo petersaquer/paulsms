@@ -69,7 +69,8 @@ data class MessageEntity(
         contactPhone = contactPhone,
         contactUsername = contactUsername,
         gifUrl = gifUrl,
-        stickerEmoji = stickerEmoji
+        stickerEmoji = stickerEmoji,
+        createdAt = createdAt
     )
 
     companion object {
@@ -102,7 +103,8 @@ data class MessageEntity(
             stickerEmoji = message.stickerEmoji,
             isEdited = message.isEdited,
             isStarred = message.isStarred,
-            isDeletedForEveryone = message.isDeletedForEveryone
+            isDeletedForEveryone = message.isDeletedForEveryone,
+            createdAt = if (message.createdAt > 0L) message.createdAt else System.currentTimeMillis()
         )
     }
 }

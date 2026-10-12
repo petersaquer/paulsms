@@ -540,7 +540,6 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     ): Chat? {
         val cleanUser = username?.trim()?.removePrefix("@")?.lowercase()?.ifEmpty { null }
         val cleanDigits = phone?.filter { it.isDigit() }?.ifEmpty { null }
-        val cleanTitleNorm = normalizeContactName(title)
         val cleanUid = userId?.trim()?.removePrefix("@")?.lowercase()?.ifEmpty { null }
 
         val currentUid = _currentUser.value?.userId ?: ""
@@ -556,22 +555,17 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
             val cUser = c.username.trim().removePrefix("@").lowercase().ifEmpty { null }
             val cDigits = c.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
-            val cTitleNorm = normalizeContactName(c.title)
 
             // 1. Coincidencia por ID determinístico de chat
             (directIdFromUid != null && (c.id == directIdFromUid || c.id == "secret_$directIdFromUid")) ||
             (directIdFromUser != null && (c.id == directIdFromUser || c.id == "secret_$directIdFromUser")) ||
             (directIdFromPhone != null && (c.id == directIdFromPhone || c.id == "secret_$directIdFromPhone")) ||
-            // 2. ID que contenga el identificador del usuario
-            (cleanUid != null && c.id.contains(cleanUid)) ||
-            (cleanUser != null && c.id.contains(cleanUser)) ||
+            // 2. ID que contenga el UID exacto del participante
+            (cleanUid != null && c.id.contains("direct_$cleanUid") || c.id.endsWith("_$cleanUid") || c.id.startsWith("direct_${cleanUid}_")) ||
             // 3. Coincidencia por nombre de usuario (@usuario)
             (cleanUser != null && cUser != null && cleanUser == cUser) ||
-            // 4. Coincidencia por número de teléfono
-            (cleanDigits != null && cDigits != null && (cleanDigits == cDigits || cleanDigits.takeLast(7) == cDigits.takeLast(7) || cleanDigits.endsWith(cDigits) || cDigits.endsWith(cleanDigits))) ||
-            // 5. Coincidencia por nombre del contacto normalizado (ej: "Juan" == "Contacto Juan")
-            (cleanTitleNorm != null && cTitleNorm != null && (cleanTitleNorm == cTitleNorm || cleanTitleNorm.contains(cTitleNorm) || cTitleNorm.contains(cleanTitleNorm))) ||
-            (cleanTitleNorm != null && cleanTitleNorm.length >= 3 && c.id.contains(cleanTitleNorm))
+            // 4. Coincidencia por número de teléfono exacto
+            (cleanDigits != null && cDigits != null && (cleanDigits == cDigits || cleanDigits.takeLast(7) == cDigits.takeLast(7)))
         }
     }
 
@@ -642,21 +636,8 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         val p2 = c2.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
         if (p1 != null && p2 != null) {
             val minLen = minOf(p1.length, p2.length)
-            if (minLen >= 6 && (p1.takeLast(7) == p2.takeLast(7) || p1 == p2 || p1.endsWith(p2) || p2.endsWith(p1))) return true
+            if (minLen >= 7 && (p1.takeLast(7) == p2.takeLast(7) || p1 == p2)) return true
         }
-
-        val t1 = normalizeContactName(c1.title)
-        val t2 = normalizeContactName(c2.title)
-        if (t1 != null && t2 != null && (t1 == t2 || t1.contains(t2) || t2.contains(t1))) {
-            if (u1 == null || u2 == null || u1 == u2) return true
-        }
-
-        if (u1 != null && c2.id.contains(u1)) return true
-        if (u2 != null && c1.id.contains(u2)) return true
-        if (p1 != null && p1.length >= 7 && c2.id.contains(p1.takeLast(7))) return true
-        if (p2 != null && p2.length >= 7 && c1.id.contains(p2.takeLast(7))) return true
-        if (t1 != null && t1.length >= 3 && (c2.id.contains(t1) || c2.title.lowercase().contains(t1))) return true
-        if (t2 != null && t2.length >= 3 && (c1.id.contains(t2) || c1.title.lowercase().contains(t2))) return true
 
         return false
     }
@@ -671,7 +652,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                     val allMerged = (canonicalMsgs + extraMsgs)
                         .map { it.copy(chatId = canonicalId) }
                         .distinctBy { it.id }
-                        .sortedBy { it.timestamp }
+                        .sortedBy { it.createdAt }
                     val cleaned = currentMap.filterKeys { it !in duplicateIds }
                     cleaned + (canonicalId to allMerged)
                 }
@@ -1117,7 +1098,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                             val existing = currentMap[chat.id] ?: emptyList()
                             val localIds = mapped.map { it.id }.toSet()
                             val merged = existing.filterNot { it.id in localIds } + mapped
-                            currentMap + (chat.id to merged.sortedBy { it.timestamp })
+                            currentMap + (chat.id to merged.sortedBy { it.createdAt })
                         }
                     }
                 }
@@ -1134,7 +1115,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                             val existing = currentMap[chat.id] ?: emptyList()
                             val cloudMsgIds = mapped.map { it.id }.toSet()
                             val merged = existing.filterNot { it.id in cloudMsgIds } + mapped
-                            currentMap + (chat.id to merged.sortedBy { it.timestamp })
+                            currentMap + (chat.id to merged.sortedBy { it.createdAt })
                         }
                     }
                 }
@@ -1206,33 +1187,40 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             status = MessageStatus.SENT
         )
 
+        val now = System.currentTimeMillis()
+        val lastMsgStr = if (isViewOnce) "🔒 Mensaje de lectura única" else trimmed
+
+        val updatedChat = targetChat?.copy(
+            lastMessage = lastMsgStr,
+            lastMessageTime = time,
+            lastUpdatedTimestamp = now
+        ) ?: Chat(
+            id = chatId,
+            title = targetChat?.title ?: "Chat",
+            lastMessage = lastMsgStr,
+            lastMessageTime = time,
+            lastUpdatedTimestamp = now
+        )
+
         _messages.update { currentMap ->
             val chatMessages = currentMap[chatId] ?: emptyList()
             currentMap + (chatId to (chatMessages + newMessage))
         }
 
         _chats.update { list ->
-            list.map {
-                if (it.id == chatId) {
-                    it.copy(
-                        lastMessage = if (isViewOnce) "🔒 Mensaje de lectura única" else trimmed,
-                        lastMessageTime = time
-                    )
-                } else it
+            val exists = list.any { it.id == chatId }
+            if (exists) {
+                list.map { if (it.id == chatId) updatedChat else it }
+            } else {
+                listOf(updatedChat) + list
             }
         }
 
-        _replyingMessage.value = null
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.value = updatedChat
+        }
 
-        val updatedChat = targetChat?.copy(
-            lastMessage = if (isViewOnce) "🔒 Mensaje de lectura única" else trimmed,
-            lastMessageTime = time
-        ) ?: Chat(
-            id = chatId,
-            title = targetChat?.title ?: "Chat",
-            lastMessage = trimmed,
-            lastMessageTime = time
-        )
+        _replyingMessage.value = null
 
         // Sync Chat and Message to local Room DB and Cloud Firestore!
         viewModelScope.launch {
@@ -1347,31 +1335,37 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             status = MessageStatus.SENT
         )
 
+        val now = System.currentTimeMillis()
+        val voiceMsgStr = "🎤 Mensaje de voz ($durationFormatted)"
+        val updatedChat = targetChat?.copy(
+            lastMessage = voiceMsgStr,
+            lastMessageTime = time,
+            lastUpdatedTimestamp = now
+        ) ?: Chat(
+            id = chatId,
+            title = targetChat?.title ?: "Chat",
+            lastMessage = voiceMsgStr,
+            lastMessageTime = time,
+            lastUpdatedTimestamp = now
+        )
+
         _messages.update { currentMap ->
             val chatMessages = currentMap[chatId] ?: emptyList()
             currentMap + (chatId to (chatMessages + newMessage))
         }
 
         _chats.update { list ->
-            list.map {
-                if (it.id == chatId) {
-                    it.copy(
-                        lastMessage = "🎤 Mensaje de voz ($durationFormatted)",
-                        lastMessageTime = time
-                    )
-                } else it
+            val exists = list.any { it.id == chatId }
+            if (exists) {
+                list.map { if (it.id == chatId) updatedChat else it }
+            } else {
+                listOf(updatedChat) + list
             }
         }
 
-        val updatedChat = targetChat?.copy(
-            lastMessage = "🎤 Mensaje de voz ($durationFormatted)",
-            lastMessageTime = time
-        ) ?: Chat(
-            id = chatId,
-            title = targetChat?.title ?: "Chat",
-            lastMessage = "🎤 Mensaje de voz ($durationFormatted)",
-            lastMessageTime = time
-        )
+        if (_selectedChat.value?.id == chatId) {
+            _selectedChat.value = updatedChat
+        }
 
         viewModelScope.launch {
             repository.syncChatToCloudAndLocal(updatedChat, listOf(updatedChat.username, targetChat?.contactPhone ?: "", currentUid, currentUsername))

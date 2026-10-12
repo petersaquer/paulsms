@@ -42,5 +42,6 @@ data class Chat(
     val keepArchivedOnNewMessage: Boolean = true,
     val isMarkedUnread: Boolean = false,
     val mutedUntilTimestamp: Long = 0L, // 0 = not muted, -1 = forever, >0 = millis
-    val readReceiptsEnabled: Boolean = true
+    val readReceiptsEnabled: Boolean = true,
+    val lastUpdatedTimestamp: Long = System.currentTimeMillis()
 )

@@ -505,7 +505,7 @@ class FirebaseChatRepository(private val context: Context) {
         var registration: ListenerRegistration? = null
         try {
             registration = db.collection("chats").document(chatId).collection("messages")
-                .orderBy("timestamp")
+                .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.ASCENDING)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.w("FirebaseChatRepo", "observeRealtimeMessages error: ${error.message}")
@@ -1107,15 +1107,25 @@ class FirebaseChatRepository(private val context: Context) {
         }
 
         val clientId = try {
-            context.getString(R.string.default_web_client_id)
+            val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+            val found = if (resId != 0) context.getString(resId) else ""
+            if (found.isNotBlank()) found else "1026314511853-t8h1vbdijdtbbb3oik3rb388g6ji4k6j.apps.googleusercontent.com"
         } catch (e: Exception) {
-            onAuthError("Falta default_web_client_id en configuración")
-            return
+            "1026314511853-t8h1vbdijdtbbb3oik3rb388g6ji4k6j.apps.googleusercontent.com"
         }
 
         val credentialManager = CredentialManager.create(activity)
+        val googleIdOption = com.google.android.libraries.identity.googleid.GetGoogleIdOption.Builder()
+            .setFilterByAuthorizedAccounts(false)
+            .setServerClientId(clientId)
+            .setAutoSelectEnabled(false)
+            .build()
+
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-        val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(googleIdOption)
+            .addCredentialOption(signInOption)
+            .build()
 
         scope.launch {
             try {
