@@ -10,10 +10,10 @@ object SampleData {
     fun createSavedMessagesChat(user: User): Chat = Chat(
         id = "saved_${user.userId}",
         title = "Mensajes Guardados",
-        subtitle = "Tu nube personal y notas",
+        subtitle = "Tus notas y mensajes personales",
         username = "",
         type = ChatType.SAVED_MESSAGES,
-        lastMessage = "Bienvenido a tu nube personal. Guarda mensajes, archivos y notas aquí.",
+        lastMessage = "Guarda mensajes, audios, fotos y notas aquí.",
         lastMessageTime = "Ahora",
         unreadCount = 0,
         isOnline = false,
@@ -21,7 +21,7 @@ object SampleData {
         isMuted = false,
         avatarGradientStart = 0xFF2AABEE,
         avatarGradientEnd = 0xFF1976D2,
-        pinnedMessageText = "Tu nube personal segura y cifrada"
+        pinnedMessageText = "Notas personales seguras"
     )
 
     fun initialChats(): List<Chat> = emptyList()

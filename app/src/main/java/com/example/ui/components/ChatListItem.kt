@@ -1,7 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,16 +39,21 @@ import com.example.ui.theme.StatusOnline
 import com.example.ui.theme.TelegramAccent
 import com.example.ui.theme.TelegramBlue
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ChatListItem(
     chat: Chat,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .testTag("chat_item_${chat.id}"),
         verticalAlignment = Alignment.CenterVertically
@@ -111,16 +116,6 @@ fun ChatListItem(
                     fontSize = 16.sp,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-
-                if (chat.isCloudSynced) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.CloudDone,
-                        contentDescription = "Firebase Cloud",
-                        tint = TelegramAccent,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
 
                 if (chat.isVerified) {
                     Spacer(modifier = Modifier.width(4.dp))

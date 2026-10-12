@@ -460,7 +460,7 @@ class FirebaseChatRepository(private val context: Context) {
                             val id = doc.getString("id") ?: doc.id
                             val participants = (doc.get("participants") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
                             val title = doc.getString("title") ?: "Chat"
-                            val subtitle = doc.getString("subtitle") ?: "Paul Cloud"
+                            val subtitle = doc.getString("subtitle") ?: "en línea"
                             val lastMsg = doc.getString("lastMessage") ?: ""
                             val lastTime = doc.getString("lastMessageTime") ?: ""
                             val rawType = doc.getString("type") ?: ChatType.DIRECT.name
@@ -1143,7 +1143,7 @@ class FirebaseChatRepository(private val context: Context) {
                             email = fb.email ?: "",
                             phoneNumber = fb.phoneNumber ?: "",
                             role = role,
-                            bio = "Conectado vía Google Cloud"
+                            bio = "Disponible"
                         )
 
                         val docData = mapOf(

@@ -910,7 +910,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             val newChat = Chat(
                 id = newId,
                 title = status.displayName,
-                subtitle = "en línea • Paul Cloud",
+                subtitle = "en línea",
                 username = if (status.username.startsWith("@")) status.username else "@${status.username}",
                 type = ChatType.DIRECT,
                 lastMessage = fullText,
@@ -1033,10 +1033,10 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         val newChat = Chat(
             id = newId,
             title = title.ifBlank { if (formattedUsername.isNotBlank()) formattedUsername else "Contacto" },
-            subtitle = if (isFirebase) "en línea • Paul Cloud" else "🔒 Chat Secreto E2EE",
+            subtitle = if (isFirebase) "en línea" else "cifrado de extremo a extremo",
             username = formattedUsername,
             type = if (isFirebase) ChatType.DIRECT else ChatType.SECRET,
-            lastMessage = if (isFirebase) "Chat iniciado vía Paul Cloud" else "🔒 Chat Secreto iniciado con cifrado E2EE",
+            lastMessage = if (isFirebase) "Chat iniciado" else "Chat iniciado con cifrado seguro",
             lastMessageTime = getCurrentTimeString(),
             unreadCount = 0,
             isOnline = isFirebase,
@@ -1052,7 +1052,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             id = "msg_" + UUID.randomUUID().toString().take(6),
             chatId = newId,
             text = if (isFirebase) {
-                "✨ Has iniciado una conversación con $title conectada a Paul Cloud Database."
+                "✨ Has iniciado una conversación con $title."
             } else {
                 "🔒 Chat Secreto activado con cifrado de extremo a extremo.\n• Las claves nunca salen de este dispositivo\n• Sin almacenamiento en la nube\n• Huella criptográfica: ${fingerprint ?: "#D4A8"}"
             },
@@ -1076,7 +1076,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             displayName = title,
             username = formattedUsername,
             phoneNumber = phone,
-            bio = if (isFirebase) "Contacto en Paul Cloud" else "Contacto Local Cifrado E2EE",
+            bio = if (isFirebase) "Disponible" else "Contacto Local Cifrado E2EE",
             isOnline = isFirebase
         )
 

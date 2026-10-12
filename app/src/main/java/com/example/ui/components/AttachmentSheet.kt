@@ -88,7 +88,7 @@ fun AttachmentSheet(
                 )
 
                 AttachmentItem(
-                    title = "Video 🎥",
+                    title = "Video",
                     icon = Icons.Default.Videocam,
                     color = Color(0xFFD32F2F),
                     testTag = "attach_video_camera",

@@ -249,7 +249,7 @@ fun SettingsDrawer(
 
             if (user?.isAdmin == true || user?.isModerator == true) {
                 DrawerMenuItem(
-                    title = "Panel de Administración 👑",
+                    title = "Panel de Administración",
                     icon = Icons.Default.Security,
                     badge = if (user.isAdmin) "Admin" else "Mod",
                     onClick = {

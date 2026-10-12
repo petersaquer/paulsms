@@ -26,13 +26,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Forward
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Reply
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,6 +52,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import android.widget.Toast
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -81,6 +96,31 @@ fun MessageBubble(
     var showReactionsPicker by remember { mutableStateOf(false) }
     var showContextMenu by remember { mutableStateOf(false) }
 
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    if (showContextMenu) {
+        WhatsAppMessageOptionsDialog(
+            message = message,
+            onDismiss = { showContextMenu = false },
+            onReaction = { emoji -> onReaction(message, emoji) },
+            onReply = { onReply(message) },
+            onCopy = {
+                val textToCopy = message.text
+                if (textToCopy.isNotBlank()) {
+                    clipboardManager.setText(AnnotatedString(textToCopy))
+                    Toast.makeText(context, "Mensaje copiado", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onForward = { onForwardMessage(message) },
+            onToggleStar = { onToggleStar(message) },
+            onEdit = { onEditMessage(message) },
+            onDeleteForMe = { onDeleteForMe(message) },
+            onDeleteForEveryone = { onDeleteForEveryone(message) },
+            onReport = { onReportMessage(message) }
+        )
+    }
+
     val bubbleColor = if (message.isOutgoing) {
         if (isDarkTheme) DarkBubbleOutgoing else LightBubbleOutgoing
     } else {
@@ -104,66 +144,6 @@ fun MessageBubble(
         Column(
             horizontalAlignment = if (message.isOutgoing) Alignment.End else Alignment.Start
         ) {
-            // Context Menu Dropdown
-            androidx.compose.material3.DropdownMenu(
-                expanded = showContextMenu,
-                onDismissRequest = { showContextMenu = false }
-            ) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("💬 Responder") },
-                    onClick = {
-                        showContextMenu = false
-                        onReply(message)
-                    }
-                )
-                if (message.isOutgoing && !message.isDeletedForEveryone && message.type == MessageType.TEXT) {
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("✏️ Editar mensaje") },
-                        onClick = {
-                            showContextMenu = false
-                            onEditMessage(message)
-                        }
-                    )
-                }
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text(if (message.isStarred) "⭐ Quitar destacado" else "⭐ Destacar (Favorito)") },
-                    onClick = {
-                        showContextMenu = false
-                        onToggleStar(message)
-                    }
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("🔄 Reenviar") },
-                    onClick = {
-                        showContextMenu = false
-                        onForwardMessage(message)
-                    }
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("🗑️ Eliminar para mí") },
-                    onClick = {
-                        showContextMenu = false
-                        onDeleteForMe(message)
-                    }
-                )
-                if (message.isOutgoing && !message.isDeletedForEveryone) {
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("🚫 Eliminar para todos", color = Color.Red) },
-                        onClick = {
-                            showContextMenu = false
-                            onDeleteForEveryone(message)
-                        }
-                    )
-                }
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("🚩 Reportar abuso") },
-                    onClick = {
-                        showContextMenu = false
-                        onReportMessage(message)
-                    }
-                )
-            }
-
             // Quick reactions floating bar if tapped
             AnimatedVisibility(
                 visible = showReactionsPicker,
@@ -715,5 +695,224 @@ private fun ReactionsPickerRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun WhatsAppMessageOptionsDialog(
+    message: Message,
+    onDismiss: () -> Unit,
+    onReaction: (String) -> Unit,
+    onReply: () -> Unit,
+    onCopy: () -> Unit,
+    onForward: () -> Unit,
+    onToggleStar: () -> Unit,
+    onEdit: () -> Unit,
+    onDeleteForMe: () -> Unit,
+    onDeleteForEveryone: () -> Unit,
+    onReport: () -> Unit
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 1. WhatsApp Floating Reaction Emojis
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val quickEmojis = listOf("👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "👏")
+                    quickEmojis.forEach { emoji ->
+                        val isSelected = message.reactions[emoji]?.let { it > 0 } == true
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(if (isSelected) TelegramAccent.copy(alpha = 0.2f) else Color.Transparent)
+                                .clickable {
+                                    onReaction(emoji)
+                                    onDismiss()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = emoji, fontSize = 22.sp)
+                        }
+                    }
+                }
+            }
+
+            // 2. Action Menu Card
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    if (!showDeleteConfirm) {
+                        ActionOptionRow(
+                            icon = Icons.AutoMirrored.Filled.Reply,
+                            title = "Responder",
+                            onClick = {
+                                onDismiss()
+                                onReply()
+                            }
+                        )
+
+                        if (message.text.isNotBlank()) {
+                            ActionOptionRow(
+                                icon = Icons.Default.ContentCopy,
+                                title = "Copiar",
+                                onClick = {
+                                    onDismiss()
+                                    onCopy()
+                                }
+                            )
+                        }
+
+                        ActionOptionRow(
+                            icon = Icons.AutoMirrored.Filled.Forward,
+                            title = "Reenviar",
+                            onClick = {
+                                onDismiss()
+                                onForward()
+                            }
+                        )
+
+                        ActionOptionRow(
+                            icon = if (message.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                            title = if (message.isStarred) "Quitar de favoritos" else "Destacar (Favorito)",
+                            onClick = {
+                                onDismiss()
+                                onToggleStar()
+                            }
+                        )
+
+                        if (message.isOutgoing && !message.isDeletedForEveryone && message.type == MessageType.TEXT) {
+                            ActionOptionRow(
+                                icon = Icons.Default.Edit,
+                                title = "Editar",
+                                onClick = {
+                                    onDismiss()
+                                    onEdit()
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        )
+
+                        ActionOptionRow(
+                            icon = Icons.Default.Delete,
+                            title = "Eliminar",
+                            iconTint = Color.Red,
+                            titleColor = Color.Red,
+                            onClick = {
+                                if (message.isOutgoing && !message.isDeletedForEveryone) {
+                                    showDeleteConfirm = true
+                                } else {
+                                    onDismiss()
+                                    onDeleteForMe()
+                                }
+                            }
+                        )
+
+                        ActionOptionRow(
+                            icon = Icons.Default.Flag,
+                            title = "Reportar",
+                            onClick = {
+                                onDismiss()
+                                onReport()
+                            }
+                        )
+                    } else {
+                        // Delete Options Submenu
+                        Text(
+                            text = "¿Deseas eliminar este mensaje?",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                        )
+
+                        ActionOptionRow(
+                            icon = Icons.Default.Delete,
+                            title = "Eliminar para todos",
+                            iconTint = Color.Red,
+                            titleColor = Color.Red,
+                            onClick = {
+                                onDismiss()
+                                onDeleteForEveryone()
+                            }
+                        )
+
+                        ActionOptionRow(
+                            icon = Icons.Default.Delete,
+                            title = "Eliminar para mí",
+                            onClick = {
+                                onDismiss()
+                                onDeleteForMe()
+                            }
+                        )
+
+                        ActionOptionRow(
+                            icon = Icons.Default.Done,
+                            title = "Cancelar",
+                            onClick = { showDeleteConfirm = false }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    iconTint: Color = MaterialTheme.colorScheme.onSurface,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = titleColor,
+            fontSize = 15.sp
+        )
     }
 }

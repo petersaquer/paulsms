@@ -1,6 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,25 +12,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ColorLens
-import androidx.compose.material.icons.filled.FontDownload
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,10 +37,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -55,8 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -66,21 +58,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
 import com.example.data.model.SavedContact
 import com.example.data.model.StatusPrivacy
 import com.example.data.model.StatusType
 import com.example.ui.theme.TelegramAccent
-import com.example.ui.theme.TelegramBlue
 
 private val STATUS_BACKGROUND_PALETTES = listOf(
-    0xFF0D5C46L, // WhatsApp classic teal
-    0xFF1E88E5L, // Paul messenger blue
-    0xFF6A1B9AL, // Purple royal
-    0xFFC2185BL, // Magenta
-    0xFFD84315L, // Coral orange
-    0xFF2E7D32L, // Emerald green
-    0xFF263238L, // Midnight slate
-    0xFF880E4FL  // Deep ruby
+    0xFF005C4BL, // WhatsApp teal clásica
+    0xFF128C7EL, // WhatsApp verde esmeralda
+    0xFF1F6F8BL, // Azul petróleo
+    0xFF4A148CL, // Púrpura profundo
+    0xFF880E4FL, // Vino tinto
+    0xFFBF360CL, // Terracota cálido
+    0xFF1B5E20L, // Verde bosque
+    0xFF263238L  // Grafito oscuro
 )
 
 private val FONT_STYLES = listOf(
@@ -90,11 +82,11 @@ private val FONT_STYLES = listOf(
     "CURSIVE" to ("Cursiva" to FontFamily.Cursive)
 )
 
-private val PRESET_REELS = listOf(
-    "https://images.unsplash.com/photo-1518791841217-8f162f1e1131?auto=format&fit=crop&w=800&q=80" to "Gatito curioso 🐱 (Reel)",
-    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80" to "Atardecer en la playa 🌅",
-    "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=800&q=80" to "Aventura al aire libre 🐕",
-    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80" to "Tecnología y Espacio 🚀"
+private val PRESET_MEDIA = listOf(
+    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80" to "Playa",
+    "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=800&q=80" to "Naturaleza",
+    "https://images.unsplash.com/photo-1518791841217-8f162f1e1131?auto=format&fit=crop&w=800&q=80" to "Mascotas",
+    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80" to "Ciudad"
 )
 
 @Composable
@@ -114,17 +106,16 @@ fun CreateStatusDialog(
         includedIds: List<String>
     ) -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(if (initialType == StatusType.TEXT) 0 else 1) }
+    var isTextMode by remember { mutableStateOf(initialType == StatusType.TEXT) }
 
     // Text status state
     var textContent by remember { mutableStateOf("") }
     var selectedColorIndex by remember { mutableIntStateOf(0) }
     var selectedFontIndex by remember { mutableIntStateOf(0) }
 
-    // Media / Reel status state
-    var selectedMediaUrl by remember { mutableStateOf(PRESET_REELS[0].first) }
+    // Media status state
+    var selectedMediaUrl by remember { mutableStateOf(PRESET_MEDIA[0].first) }
     var captionText by remember { mutableStateOf("") }
-    var isReelMode by remember { mutableStateOf(initialType == StatusType.REEL) }
 
     val statusMediaLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
@@ -142,29 +133,46 @@ fun CreateStatusDialog(
 
     var isPublishing by remember { mutableStateOf(false) }
 
+    val currentBgColor = if (isTextMode) {
+        Color(STATUS_BACKGROUND_PALETTES[selectedColorIndex])
+    } else {
+        Color(0xFF0B141B)
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f))
+                .background(currentBgColor)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 24.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                // Top header bar
+                // 1. Top Bar: Clean WhatsApp design with no cluttered icons
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.testTag("close_create_status")
+                        modifier = Modifier
+                            .size(40.dp)
+                            .testTag("close_create_status")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
@@ -173,81 +181,106 @@ fun CreateStatusDialog(
                         )
                     }
 
-                    // Mode Tabs
-                    TabRow(
-                        selectedTabIndex = selectedTab,
-                        containerColor = Color.Transparent,
-                        contentColor = Color.White,
-                        indicator = { tabPositions ->
-                            TabRowDefaults.SecondaryIndicator(
-                                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                                color = TelegramAccent,
-                                height = 3.dp
-                            )
-                        },
-                        divider = {},
-                        modifier = Modifier.width(220.dp)
+                    // Mode Switcher: Texto / Foto
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.Black.copy(alpha = 0.35f),
+                        modifier = Modifier.padding(horizontal = 8.dp)
                     ) {
-                        Tab(
-                            selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
-                            text = { Text("Texto ✍️", color = Color.White, fontSize = 14.sp) }
-                        )
-                        Tab(
-                            selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
-                            text = { Text("Reel / Foto 🎬", color = Color.White, fontSize = 14.sp) }
-                        )
+                        Row(modifier = Modifier.padding(3.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (isTextMode) Color.White.copy(alpha = 0.25f) else Color.Transparent)
+                                    .clickable { isTextMode = true }
+                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "Texto",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isTextMode) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (!isTextMode) Color.White.copy(alpha = 0.25f) else Color.Transparent)
+                                    .clickable { isTextMode = false }
+                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "Foto",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (!isTextMode) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
                     }
 
-                    // Privacy Pill Button
-                    Surface(
-                        onClick = { showPrivacyDialog = true },
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color.White.copy(alpha = 0.15f),
-                        modifier = Modifier.testTag("status_privacy_pill")
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    // Top Right Tools
+                    if (isTextMode) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    selectedFontIndex = (selectedFontIndex + 1) % FONT_STYLES.size
+                                },
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.TextFields,
+                                    contentDescription = "Fuente",
+                                    tint = Color.White
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    selectedColorIndex = (selectedColorIndex + 1) % STATUS_BACKGROUND_PALETTES.size
+                                },
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ColorLens,
+                                    contentDescription = "Color",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    } else {
+                        IconButton(
+                            onClick = {
+                                statusMediaLauncher.launch(
+                                    androidx.activity.result.PickVisualMediaRequest(
+                                        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                                    )
+                                )
+                            },
+                            modifier = Modifier.size(38.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = TelegramAccent,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = when (privacy) {
-                                    StatusPrivacy.MY_CONTACTS -> "Contactos"
-                                    StatusPrivacy.MY_CONTACTS_EXCEPT -> "Excluidos (${excludedIds.size})"
-                                    StatusPrivacy.ONLY_SHARE_WITH -> "Compartir (${includedIds.size})"
-                                    StatusPrivacy.PUBLIC -> "Público"
-                                },
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                imageVector = Icons.Default.PhotoLibrary,
+                                contentDescription = "Galería",
+                                tint = Color.White
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // CONTENT AREA
-                if (selectedTab == 0) {
-                    // TEXT STATUS (WhatsApp style)
-                    val bgColor = Color(STATUS_BACKGROUND_PALETTES[selectedColorIndex])
+                // 2. Middle Content Area (Clean, responsive, never overlapping)
+                if (isTextMode) {
                     val currentFont = FONT_STYLES[selectedFontIndex].second.second
+                    val fontSize = when {
+                        textContent.length > 150 -> 20.sp
+                        textContent.length > 70 -> 24.sp
+                        else -> 30.sp
+                    }
 
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(bgColor)
-                            .padding(24.dp),
+                            .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         OutlinedTextField(
@@ -255,9 +288,9 @@ fun CreateStatusDialog(
                             onValueChange = { if (it.length <= 400) textContent = it },
                             placeholder = {
                                 Text(
-                                    "Escribe un estado...",
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    fontSize = 26.sp,
+                                    text = "Escribe un estado...",
+                                    color = Color.White.copy(alpha = 0.55f),
+                                    fontSize = fontSize,
                                     fontFamily = currentFont,
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.fillMaxWidth()
@@ -265,10 +298,11 @@ fun CreateStatusDialog(
                             },
                             textStyle = TextStyle(
                                 color = Color.White,
-                                fontSize = 26.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontSize = fontSize,
+                                fontWeight = FontWeight.SemiBold,
                                 fontFamily = currentFont,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
+                                lineHeight = if (fontSize > 24.sp) 38.sp else 28.sp
                             ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Color.Transparent,
@@ -281,247 +315,232 @@ fun CreateStatusDialog(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Text Formatting Controls (Color & Font picker)
+                    // Background color row at bottom
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Color Palette Swatches
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.horizontalScroll(rememberScrollState())
-                        ) {
-                            STATUS_BACKGROUND_PALETTES.forEachIndexed { idx, colorLong ->
-                                val isSelected = selectedColorIndex == idx
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(colorLong))
-                                        .border(
-                                            width = if (isSelected) 3.dp else 1.dp,
-                                            color = if (isSelected) Color.White else Color.Transparent,
-                                            shape = CircleShape
-                                        )
-                                        .clickable { selectedColorIndex = idx }
-                                )
-                            }
-                        }
-
-                        // Font Style Switcher Button
-                        Button(
-                            onClick = {
-                                selectedFontIndex = (selectedFontIndex + 1) % FONT_STYLES.size
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.FontDownload, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(FONT_STYLES[selectedFontIndex].second.first, color = Color.White, fontSize = 12.sp)
-                        }
-                    }
-
-                } else {
-                    // REEL / MEDIA STATUS
-                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0xFF1E1E1E))
-                            .padding(12.dp)
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            // Reel / Photo Selection
-                            Row(
+                        STATUS_BACKGROUND_PALETTES.forEachIndexed { idx, colorLong ->
+                            val isSelected = selectedColorIndex == idx
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Surface(
-                                    onClick = { isReelMode = false },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (!isReelMode) TelegramBlue else Color.White.copy(alpha = 0.1f),
-                                    modifier = Modifier.padding(end = 8.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Default.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Foto", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-
-                                Surface(
-                                    onClick = { isReelMode = true },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (isReelMode) TelegramAccent else Color.White.copy(alpha = 0.1f)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Default.Movie, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Reel / Video 🎬", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-
-                            // Gallery Picker Button
-                            Button(
-                                onClick = {
-                                    statusMediaLauncher.launch(
-                                        androidx.activity.result.PickVisualMediaRequest(
-                                            if (isReelMode) androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.VideoOnly
-                                            else androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
-                                        )
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(colorLong))
+                                    .border(
+                                        width = if (isSelected) 2.5.dp else 1.dp,
+                                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.25f),
+                                        shape = CircleShape
                                     )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = TelegramBlue),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp)
-                                    .testTag("pick_device_media_for_status")
-                            ) {
-                                Icon(Icons.Default.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("📱 Subir desde la Galería de mi Dispositivo", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Text(
-                                text = "O selecciona una de las plantillas destacadas:",
-                                color = Color.White.copy(alpha = 0.7f),
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            )
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                                    .padding(vertical = 6.dp)
-                            ) {
-                                PRESET_REELS.forEach { (url, label) ->
-                                    val isSelected = selectedMediaUrl == url
-                                    Card(
-                                        onClick = { selectedMediaUrl = url },
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = if (isSelected) TelegramBlue.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.1f)
-                                        ),
-                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, TelegramAccent) else null,
-                                        modifier = Modifier.width(140.dp)
-                                    ) {
-                                        Column(modifier = Modifier.padding(8.dp)) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(80.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(
-                                                        Brush.linearGradient(
-                                                            colors = listOf(Color(0xFF2AABEE), Color(0xFF00C853))
-                                                        )
-                                                    ),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isReelMode) Icons.Default.Movie else Icons.Default.Image,
-                                                    contentDescription = null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(32.dp)
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = label,
-                                                color = Color.White,
-                                                fontSize = 11.sp,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.weight(1f))
-
-                            // Caption input
-                            OutlinedTextField(
-                                value = captionText,
-                                onValueChange = { captionText = it },
-                                placeholder = { Text("Añade un comentario o pie de estado...", color = Color.White.copy(alpha = 0.5f)) },
-                                singleLine = true,
-                                textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = TelegramAccent,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                                    cursorColor = TelegramAccent
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("status_caption_input")
+                                    .clickable { selectedColorIndex = idx }
                             )
                         }
+                    }
+                } else {
+                    // Media Mode
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E272E)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AsyncImage(
+                                    model = selectedMediaUrl,
+                                    contentDescription = "Previsualización de estado",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                                Surface(
+                                    onClick = {
+                                        statusMediaLauncher.launch(
+                                            androidx.activity.result.PickVisualMediaRequest(
+                                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                                            )
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = Color.Black.copy(alpha = 0.6f),
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(12.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PhotoLibrary,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = "Cambiar",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Curated templates row with clean text titles (NO emojis)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            PRESET_MEDIA.forEach { (url, label) ->
+                                val isSelected = selectedMediaUrl == url
+                                Surface(
+                                    onClick = { selectedMediaUrl = url },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) TelegramAccent.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.1f),
+                                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, TelegramAccent) else null
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Caption input
+                        OutlinedTextField(
+                            value = captionText,
+                            onValueChange = { captionText = it },
+                            placeholder = {
+                                Text("Añade un comentario...", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp)
+                            },
+                            singleLine = true,
+                            textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = TelegramAccent,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                                cursorColor = TelegramAccent
+                            ),
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("status_caption_input")
+                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // Bottom Action Bar: Publish Button
+                // 3. Bottom Row: Privacy Pill + Floating WhatsApp Send Button
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(
-                        onClick = {
-                            isPublishing = true
-                            val type = if (selectedTab == 0) StatusType.TEXT else if (isReelMode) StatusType.REEL else StatusType.PHOTO
-                            onPublish(
-                                type,
-                                textContent,
-                                selectedMediaUrl,
-                                STATUS_BACKGROUND_PALETTES[selectedColorIndex],
-                                FONT_STYLES[selectedFontIndex].first,
-                                captionText,
-                                privacy,
-                                excludedIds,
-                                includedIds
+                    // Privacy indicator pill (Bottom-left like WhatsApp)
+                    Surface(
+                        onClick = { showPrivacyDialog = true },
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.Black.copy(alpha = 0.4f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                        modifier = Modifier.testTag("status_privacy_pill")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = TelegramAccent,
+                                modifier = Modifier.size(14.dp)
                             )
-                        },
-                        enabled = !isPublishing && (selectedTab == 1 || textContent.isNotBlank()),
-                        colors = ButtonDefaults.buttonColors(containerColor = TelegramAccent),
-                        shape = RoundedCornerShape(24.dp),
-                        modifier = Modifier.testTag("publish_status_button")
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = when (privacy) {
+                                    StatusPrivacy.MY_CONTACTS -> "Estados: Mis contactos"
+                                    StatusPrivacy.MY_CONTACTS_EXCEPT -> "Excluidos (${excludedIds.size})"
+                                    StatusPrivacy.ONLY_SHARE_WITH -> "Compartir (${includedIds.size})"
+                                    StatusPrivacy.PUBLIC -> "Público"
+                                },
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    // Floating circular Send Button (Bottom-right like WhatsApp)
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isTextMode && textContent.isBlank()) TelegramAccent.copy(alpha = 0.4f)
+                                else TelegramAccent
+                            )
+                            .clickable(
+                                enabled = !isPublishing && (!isTextMode || textContent.isNotBlank())
+                            ) {
+                                isPublishing = true
+                                val type = if (isTextMode) StatusType.TEXT else StatusType.PHOTO
+                                onPublish(
+                                    type,
+                                    textContent,
+                                    selectedMediaUrl,
+                                    STATUS_BACKGROUND_PALETTES[selectedColorIndex],
+                                    FONT_STYLES[selectedFontIndex].first,
+                                    captionText,
+                                    privacy,
+                                    excludedIds,
+                                    includedIds
+                                )
+                            }
+                            .testTag("publish_status_button"),
+                        contentAlignment = Alignment.Center
                     ) {
                         if (isPublishing) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Publicar estado",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
-                        Icon(Icons.Default.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (selectedTab == 0) "Publicar Estado" else if (isReelMode) "Publicar Reel" else "Publicar Foto",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            fontSize = 15.sp
-                        )
                     }
                 }
             }

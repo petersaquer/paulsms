@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
@@ -75,25 +76,16 @@ fun AddContactDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.PersonAdd,
-                    contentDescription = null,
-                    tint = TelegramBlue,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Añadir Contacto",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            Text(
+                text = "Añadir contacto",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Busca por @usuario o ingresa un número de teléfono. Si el usuario existe en Firebase se conectará a la nube, los demás se protegerán con cifrado extremo a extremo (E2EE).",
+                    text = "Busca por @usuario o ingresa un número de teléfono para iniciar una conversación directa.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 16.sp
@@ -212,7 +204,7 @@ fun AddContactDialog(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Usuario de Firebase Cloud",
+                                        text = "Contacto registrado",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = Color(0xFF2E7D32)
@@ -264,7 +256,7 @@ fun AddContactDialog(
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Este usuario no está en la base de datos de Firebase. Se creará un Chat Secreto protegido con claves criptográficas exclusivas en tu dispositivo.",
+                                    text = "Este contacto no tiene una cuenta pública registrada. Se iniciará una conversación con cifrado seguro en tu dispositivo.",
                                     fontSize = 12.sp,
                                     color = Color(0xFF5D4037),
                                     lineHeight = 16.sp
@@ -301,15 +293,13 @@ fun AddContactDialog(
                 ),
                 modifier = Modifier.testTag("confirm_add_contact_button")
             ) {
-                if (foundFirebaseUser != null) {
-                    Icon(imageVector = Icons.Default.CloudDone, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Abrir Chat Cloud")
-                } else {
-                    Icon(imageVector = Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Abrir Chat E2EE")
-                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Iniciar chat")
             }
         },
         dismissButton = {

@@ -349,34 +349,14 @@ fun ChatDetailScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (chat.isEncrypted || chat.type == com.example.data.model.ChatType.SECRET) {
-                                        Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = "Cifrado E2EE",
-                                            tint = Color(0xFF00C853),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                    }
-
                                     Text(
                                         text = chat.title,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (chat.isEncrypted || chat.type == com.example.data.model.ChatType.SECRET) Color(0xFF00C853) else MaterialTheme.colorScheme.onSurface,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-
-                                    if (chat.isCloudSynced) {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(
-                                            imageVector = Icons.Default.CloudDone,
-                                            contentDescription = "Firebase Cloud",
-                                            tint = TelegramAccent,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
 
                                     if (chat.isVerified) {
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -590,29 +570,6 @@ fun ChatDetailScreen(
                             fontSize = 11.sp
                         )
                     }
-                }
-            } else if (chat.isCloudSynced) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFFE3F2FD).copy(alpha = 0.95f))
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CloudDone,
-                        contentDescription = null,
-                        tint = TelegramBlue,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Base de datos Firebase Cloud activa • Sincronizado en tiempo real",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = TelegramBlue,
-                        fontSize = 11.sp
-                    )
                 }
             }
 

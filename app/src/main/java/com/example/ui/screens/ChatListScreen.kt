@@ -72,6 +72,26 @@ import com.example.ui.components.AddContactDialog
 import com.example.ui.components.ChatListItem
 import com.example.ui.components.NewChatDialog
 import com.example.ui.components.StoriesBar
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.automirrored.filled.Forward
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import android.widget.Toast
+import com.example.ui.components.AvatarView
 import com.example.ui.theme.TelegramAccent
 import com.example.ui.theme.TelegramBlue
 import com.example.ui.viewmodel.ChatFolder
@@ -103,12 +123,16 @@ fun ChatListScreen(
     onOpenStatusGroup: (UserStatusGroup) -> Unit = {},
     onCreateTextStatus: () -> Unit = {},
     onCreateMediaStatus: () -> Unit = {},
+    onDeleteChat: (String) -> Unit = {},
+    onTogglePinChat: (String) -> Unit = {},
+    onToggleMuteChat: (String) -> Unit = {},
     onOpenSettings: () -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var showNewChatDialog by remember { mutableStateOf(false) }
     var showAddContactDialog by remember { mutableStateOf(false) }
+    var selectedChatForOptions by remember { mutableStateOf<Chat?>(null) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -198,23 +222,12 @@ fun ChatListScreen(
                 } else {
                     TopAppBar(
                         title = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Paul",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 20.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                if (isFirebaseSignedIn) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.CloudDone,
-                                        contentDescription = "Firebase Conectado",
-                                        tint = TelegramAccent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "Paul",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         },
                         navigationIcon = {
                             IconButton(
@@ -468,7 +481,8 @@ fun ChatListScreen(
                         items(displayedChats, key = { it.id }) { chat ->
                             ChatListItem(
                                 chat = chat,
-                                onClick = { onChatClick(chat) }
+                                onClick = { onChatClick(chat) },
+                                onLongClick = { selectedChatForOptions = chat }
                             )
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 78.dp),
@@ -479,6 +493,53 @@ fun ChatListScreen(
                 }
             }
         }
+    }
+
+    selectedChatForOptions?.let { chat ->
+        val context = LocalContext.current
+        val clipboardManager = LocalClipboardManager.current
+        WhatsAppChatOptionsDialog(
+            chat = chat,
+            onDismiss = { selectedChatForOptions = null },
+            onOpenAndReply = {
+                selectedChatForOptions = null
+                onChatClick(chat)
+            },
+            onForward = {
+                selectedChatForOptions = null
+                val shareIntent = android.content.Intent().apply {
+                    action = android.content.Intent.ACTION_SEND
+                    putExtra(android.content.Intent.EXTRA_TEXT, "Contacto: ${chat.title} (${chat.username.ifBlank { chat.contactPhone ?: "" }})")
+                    type = "text/plain"
+                }
+                context.startActivity(android.content.Intent.createChooser(shareIntent, "Reenviar contacto"))
+            },
+            onCopy = {
+                selectedChatForOptions = null
+                val info = "${chat.title}\n${chat.username.ifBlank { chat.contactPhone ?: "" }}"
+                clipboardManager.setText(AnnotatedString(info))
+                Toast.makeText(context, "Información del chat copiada", Toast.LENGTH_SHORT).show()
+            },
+            onTogglePin = {
+                selectedChatForOptions = null
+                onTogglePinChat(chat.id)
+                Toast.makeText(context, if (chat.isPinned) "Chat desfijado" else "Chat fijado", Toast.LENGTH_SHORT).show()
+            },
+            onToggleMute = {
+                selectedChatForOptions = null
+                onToggleMuteChat(chat.id)
+                Toast.makeText(context, if (chat.isMuted) "Notificaciones activadas" else "Chat silenciado", Toast.LENGTH_SHORT).show()
+            },
+            onDelete = {
+                selectedChatForOptions = null
+                onDeleteChat(chat.id)
+                Toast.makeText(context, "Chat eliminado", Toast.LENGTH_SHORT).show()
+            },
+            onReaction = { emoji ->
+                selectedChatForOptions = null
+                Toast.makeText(context, "Reacción $emoji enviada a ${chat.title}", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 
     if (showAddContactDialog) {
@@ -496,6 +557,217 @@ fun ChatListScreen(
                 showNewChatDialog = false
                 onCreateNewChat(title, type, desc)
             }
+        )
+    }
+}
+
+@Composable
+private fun WhatsAppChatOptionsDialog(
+    chat: Chat,
+    onDismiss: () -> Unit,
+    onOpenAndReply: () -> Unit,
+    onForward: () -> Unit,
+    onCopy: () -> Unit,
+    onTogglePin: () -> Unit,
+    onToggleMute: () -> Unit,
+    onDelete: () -> Unit,
+    onReaction: (String) -> Unit
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 1. WhatsApp Floating Reaction Emojis
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val quickEmojis = listOf("👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "👏")
+                    quickEmojis.forEach { emoji ->
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    onReaction(emoji)
+                                }
+                                .padding(2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = emoji, fontSize = 22.sp)
+                        }
+                    }
+                }
+            }
+
+            // 2. Action Menu Card
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    if (!showDeleteConfirm) {
+                        // Header info
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AvatarView(
+                                title = chat.title,
+                                type = chat.type,
+                                gradientStart = chat.avatarGradientStart,
+                                gradientEnd = chat.avatarGradientEnd,
+                                size = 42.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = chat.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (chat.username.isNotBlank()) chat.username else (chat.contactPhone ?: "Chat directo"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        )
+
+                        ChatActionOptionRow(
+                            icon = Icons.AutoMirrored.Filled.Reply,
+                            title = "Responder chat",
+                            onClick = onOpenAndReply
+                        )
+
+                        ChatActionOptionRow(
+                            icon = Icons.AutoMirrored.Filled.Forward,
+                            title = "Reenviar chat",
+                            onClick = onForward
+                        )
+
+                        ChatActionOptionRow(
+                            icon = Icons.Default.ContentCopy,
+                            title = "Copiar información",
+                            onClick = onCopy
+                        )
+
+                        ChatActionOptionRow(
+                            icon = Icons.Default.PushPin,
+                            title = if (chat.isPinned) "Desfijar chat" else "Fijar chat",
+                            onClick = onTogglePin
+                        )
+
+                        ChatActionOptionRow(
+                            icon = if (chat.isMuted) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                            title = if (chat.isMuted) "Activar notificaciones" else "Silenciar notificaciones",
+                            onClick = onToggleMute
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        )
+
+                        ChatActionOptionRow(
+                            icon = Icons.Default.Delete,
+                            title = "Eliminar chat",
+                            iconTint = Color.Red,
+                            titleColor = Color.Red,
+                            onClick = { showDeleteConfirm = true }
+                        )
+                    } else {
+                        // Delete Confirmation
+                        Text(
+                            text = "¿Deseas eliminar este chat?",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                        )
+                        Text(
+                            text = "Se borrarán todos los mensajes de esta conversación.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        ChatActionOptionRow(
+                            icon = Icons.Default.Delete,
+                            title = "Confirmar y eliminar chat",
+                            iconTint = Color.Red,
+                            titleColor = Color.Red,
+                            onClick = onDelete
+                        )
+
+                        ChatActionOptionRow(
+                            icon = Icons.Default.Close,
+                            title = "Cancelar",
+                            onClick = { showDeleteConfirm = false }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatActionOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    iconTint: Color = MaterialTheme.colorScheme.onSurface,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = titleColor,
+            fontSize = 15.sp
         )
     }
 }

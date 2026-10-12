@@ -56,7 +56,7 @@ fun NewChatDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Crear en Paul",
+                text = "Crear nuevo chat",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )

@@ -281,6 +281,15 @@ fun PaulApp(
                     onCreateMediaStatus = {
                         createStatusInitialType = StatusType.REEL
                     },
+                    onDeleteChat = { chatId ->
+                        viewModel.deleteChat(chatId)
+                    },
+                    onTogglePinChat = { chatId ->
+                        viewModel.togglePinChat(chatId)
+                    },
+                    onToggleMuteChat = { chatId ->
+                        viewModel.toggleMuteChat(chatId)
+                    },
                     onOpenSettings = {
                         currentScreen = PaulScreen.SETTINGS
                     }
