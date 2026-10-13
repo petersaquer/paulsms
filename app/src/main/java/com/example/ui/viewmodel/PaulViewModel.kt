@@ -259,22 +259,62 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
 
     private var cloudChatsJob: Job? = null
 
+    /**
+     * Strictly verifies whether a chat belongs to or contains the active user.
+     * Prevents cross-account data leaking when switching users or reading local DB.
+     */
+    fun isCurrentUserParticipantIn(chat: Chat): Boolean {
+        val currentUser = _currentUser.value ?: return false
+        val myUid = currentUser.userId.trim().lowercase()
+        val myUname = currentUser.username.trim().removePrefix("@").lowercase()
+        val myPhone = currentUser.phoneNumber.filter { it.isDigit() }
+
+        // Saved messages chat MUST match the active user's ID
+        if (chat.type == ChatType.SAVED_MESSAGES) {
+            return chat.id == "saved_${currentUser.userId}"
+        }
+
+        val lowerId = chat.id.lowercase()
+
+        // Reject other users' saved messages chats
+        if (lowerId.startsWith("saved_") && lowerId != "saved_${currentUser.userId.lowercase()}") {
+            return false
+        }
+
+        // Channels or Public Groups: accessible if valid
+        if (chat.type == ChatType.CHANNEL || chat.type == ChatType.GROUP) {
+            return true
+        }
+
+        // Direct / Secret chats check
+        if (myUid.isNotBlank() && lowerId.contains(myUid)) return true
+        if (myUname.isNotBlank() && lowerId.contains(myUname)) return true
+        if (myPhone.isNotBlank() && lowerId.contains(myPhone)) return true
+
+        val partnerUsername = chat.username.trim().removePrefix("@").lowercase()
+        return partnerUsername.isNotBlank() && partnerUsername != myUname
+    }
+
     init {
         viewModelScope.launch {
             try {
                 _registeredCount.value = repository.getRegisteredUsersCount()
                 _isFirebaseSignedIn.value = repository.isUserSignedIn()
 
-                // 1. Observe local Room DB chats continuously
+                // 1. Observe local Room DB chats continuously (Strictly filtered by active user)
                 launch {
                     repository.getLocalChatsFlow().collect { localChats ->
-                        if (localChats.isNotEmpty()) {
+                        val user = _currentUser.value
+                        if (user != null && localChats.isNotEmpty()) {
+                            val userChats = localChats.filter { isCurrentUserParticipantIn(it) }
                             _chats.update { currentList ->
-                                val localMap = localChats.associateBy { it.id }
-                                val merged = currentList.map { localMap[it.id] ?: it } +
-                                        localChats.filterNot { lc -> currentList.any { c -> c.id == lc.id } }
+                                val localMap = userChats.associateBy { it.id }
+                                val merged = currentList.filter { isCurrentUserParticipantIn(it) }.map { localMap[it.id] ?: it } +
+                                        userChats.filterNot { lc -> currentList.any { c -> c.id == lc.id } }
                                 deduplicateDirectChatsList(merged)
                             }
+                        } else if (user == null) {
+                            _chats.value = emptyList()
                         }
                     }
                 }
@@ -290,8 +330,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                         observeCloudUserChats(user)
                     }
                 }
-                // Limpieza inicial de chats duplicados existentes
-                _chats.update { deduplicateDirectChatsList(it) }
+                _chats.update { deduplicateDirectChatsList(it.filter { isCurrentUserParticipantIn(it) }) }
                 startGlobalNotificationListener()
             } catch (e: Exception) {
                 Log.w("PaulViewModel", "Safe init exception: ${e.message}")
@@ -303,16 +342,32 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         cloudChatsJob?.cancel()
         cloudChatsJob = viewModelScope.launch {
             repository.observeUserChats(user.userId, user.username, viewModelScope).collect { cloudChats ->
-                if (cloudChats.isNotEmpty()) {
-                    _chats.update { currentList ->
-                        val cloudMap = cloudChats.associateBy { it.id }
-                        val merged = currentList.map { cloudMap[it.id] ?: it } +
-                                cloudChats.filterNot { cc -> currentList.any { c -> c.id == cc.id } }
-                        deduplicateDirectChatsList(merged)
-                    }
+                _chats.update { currentList ->
+                    val validCurrent = currentList.filter { isCurrentUserParticipantIn(it) }
+                    val validCloud = cloudChats.filter { isCurrentUserParticipantIn(it) }
+                    val cloudMap = validCloud.associateBy { it.id }
+                    val merged = validCurrent.map { cloudMap[it.id] ?: it } +
+                            validCloud.filterNot { cc -> validCurrent.any { c -> c.id == cc.id } }
+                    deduplicateDirectChatsList(merged)
                 }
             }
         }
+    }
+
+    private suspend fun resetLocalAndActiveState(user: User) {
+        messagesListenerJob?.cancel()
+        cloudChatsJob?.cancel()
+        globalListeners.values.forEach { it.cancel() }
+        globalListeners.clear()
+        seenMessageIds.clear()
+
+        repository.clearLocalDatabase()
+
+        _currentUser.value = user
+        _isFirebaseSignedIn.value = true
+        _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+        _messages.value = emptyMap()
+        _selectedChat.value = null
     }
 
     suspend fun getRegisteredUsersCount(): Int {
@@ -342,9 +397,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val res = repository.registerUser(fullName, username, email, pass, phone, bio)
             res.onSuccess { user ->
-                _currentUser.value = user
-                _isFirebaseSignedIn.value = true
-                _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                resetLocalAndActiveState(user)
                 _registeredCount.value = repository.getRegisteredUsersCount()
                 observeCloudUserChats(user)
                 onComplete()
@@ -366,9 +419,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val res = repository.loginUser(identifier, pass)
             res.onSuccess { user ->
-                _currentUser.value = user
-                _isFirebaseSignedIn.value = true
-                _chats.value = listOf(SampleData.createSavedMessagesChat(user))
+                resetLocalAndActiveState(user)
                 observeCloudUserChats(user)
                 onComplete()
             }.onFailure {
@@ -381,11 +432,11 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         repository.onGoogleSignInClicked(
             activity = activity,
             onAuthSuccess = { user ->
-                _isFirebaseSignedIn.value = true
-                _currentUser.value = user
-                _chats.value = listOf(SampleData.createSavedMessagesChat(user))
-                observeCloudUserChats(user)
-                onComplete()
+                viewModelScope.launch {
+                    resetLocalAndActiveState(user)
+                    observeCloudUserChats(user)
+                    onComplete()
+                }
             },
             onAuthError = onError,
             scope = viewModelScope
@@ -395,12 +446,17 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     fun signOut(onComplete: () -> Unit) {
         messagesListenerJob?.cancel()
         cloudChatsJob?.cancel()
+        globalListeners.values.forEach { it.cancel() }
+        globalListeners.clear()
+        seenMessageIds.clear()
+
+        _isFirebaseSignedIn.value = false
+        _currentUser.value = null
+        _chats.value = emptyList()
+        _messages.value = emptyMap()
+        _selectedChat.value = null
+
         repository.signOut(viewModelScope) {
-            _isFirebaseSignedIn.value = false
-            _currentUser.value = null
-            _chats.value = emptyList()
-            _messages.value = emptyMap()
-            _selectedChat.value = null
             onComplete()
         }
     }
@@ -638,9 +694,14 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     private fun isSameDirectContact(c1: Chat, c2: Chat): Boolean {
         if (c1.id == c2.id) return true
 
+        val currentUser = _currentUser.value ?: return false
+        val myUname = currentUser.username.trim().removePrefix("@").lowercase()
+
+        if (!isCurrentUserParticipantIn(c1) || !isCurrentUserParticipantIn(c2)) return false
+
         val u1 = c1.username.trim().removePrefix("@").lowercase().ifEmpty { null }
         val u2 = c2.username.trim().removePrefix("@").lowercase().ifEmpty { null }
-        if (u1 != null && u2 != null && u1 == u2) return true
+        if (u1 != null && u2 != null && u1 != myUname && u2 != myUname && u1 == u2) return true
 
         val p1 = c1.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
         val p2 = c2.contactPhone?.filter { it.isDigit() }?.ifEmpty { null }
@@ -1083,6 +1144,12 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectChat(chat: Chat?) {
+        if (chat != null && !isCurrentUserParticipantIn(chat)) {
+            Log.w("PaulViewModel", "Blocked selection of unauthorized chat: ${chat.id}")
+            _selectedChat.value = null
+            return
+        }
+
         _selectedChat.value = chat
         _replyingMessage.value = null
         messagesListenerJob?.cancel()
@@ -2102,6 +2169,12 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+        }
+    }
+
+    fun setUserOnlineStatus(isOnline: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setUserOnlineStatus(isOnline)
         }
     }
 }

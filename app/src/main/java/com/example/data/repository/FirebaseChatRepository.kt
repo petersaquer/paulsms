@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.io.File
 import android.net.Uri
 import java.security.MessageDigest
@@ -511,7 +512,7 @@ class FirebaseChatRepository(private val context: Context) {
                             role = doc.getString("role") ?: UserRoles.USER,
                             isBanned = doc.getBoolean("isBanned") ?: false,
                             isBlocked = doc.getBoolean("isBlocked") ?: false,
-                            isOnline = doc.getBoolean("isOnline") ?: true,
+                            isOnline = doc.getBoolean("isOnline") ?: false,
                             avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
                             avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2,
                             createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
@@ -1205,7 +1206,7 @@ class FirebaseChatRepository(private val context: Context) {
                 bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
                 role = doc.getString("role") ?: UserRoles.USER,
                 isBanned = false,
-                isOnline = doc.getBoolean("isOnline") ?: true,
+                isOnline = doc.getBoolean("isOnline") ?: false,
                 isFirebaseUser = true,
                 avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
                 avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2,
@@ -1771,6 +1772,15 @@ class FirebaseChatRepository(private val context: Context) {
         }
     }
 
+    suspend fun clearLocalDatabase() {
+        try {
+            chatDao.clearAll()
+            messageDao.clearAll()
+        } catch (e: Exception) {
+            Log.w("Repository", "Clear local database error: ${e.message}")
+        }
+    }
+
     suspend fun saveAuditLog(entry: AuditLogEntry) {
         try {
             db.collection("audit_logs").document(entry.id).set(entry).await()
@@ -1779,21 +1789,60 @@ class FirebaseChatRepository(private val context: Context) {
         }
     }
 
-    fun signOut(scope: CoroutineScope, onComplete: () -> Unit) {
+    suspend fun setUserOnlineStatus(isOnline: Boolean) {
+        val user = activeUser ?: return
         try {
-            auth?.signOut()
+            val updates = mapOf(
+                "isOnline" to isOnline,
+                "lastSeen" to FieldValue.serverTimestamp()
+            )
+            db.collection("users").document(user.userId).set(updates, SetOptions.merge())
+            val cleanUsername = user.username.trim().removePrefix("@").lowercase()
+            if (cleanUsername.isNotBlank()) {
+                db.collection("public_profiles").document(cleanUsername).set(updates, SetOptions.merge())
+            }
         } catch (e: Exception) {
-            Log.w("Auth", "Sign out error: ${e.message}")
+            Log.w("FirebaseChatRepo", "Error updating online status ($isOnline): ${e.message}")
         }
+    }
+
+    fun signOut(scope: CoroutineScope, onComplete: () -> Unit) {
+        val userToLogOut = activeUser
         activeUser = null
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
+            if (userToLogOut != null) {
+                try {
+                    val offlineUpdates = mapOf(
+                        "isOnline" to false,
+                        "lastSeen" to FieldValue.serverTimestamp()
+                    )
+                    db.collection("users").document(userToLogOut.userId).set(offlineUpdates, SetOptions.merge())
+                    val cleanUsername = userToLogOut.username.trim().removePrefix("@").lowercase()
+                    if (cleanUsername.isNotBlank()) {
+                        db.collection("public_profiles").document(cleanUsername).set(offlineUpdates, SetOptions.merge())
+                    }
+                } catch (e: Exception) {
+                    Log.w("Auth", "Error updating offline status in Firestore: ${e.message}")
+                }
+            }
+
+            try {
+                auth?.signOut()
+            } catch (e: Exception) {
+                Log.w("Auth", "Sign out error: ${e.message}")
+            }
+
+            clearLocalDatabase()
+
             try {
                 val credentialManager = CredentialManager.create(context)
                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
             } catch (e: Exception) {
                 Log.e("Auth", "Error al limpiar credenciales", e)
             } finally {
-                onComplete()
+                withContext(Dispatchers.Main) {
+                    onComplete()
+                }
             }
         }
     }

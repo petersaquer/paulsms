@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +83,34 @@ fun PaulApp(
     val activity = context as? Activity
 
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, currentUser) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START,
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    if (currentUser != null) {
+                        viewModel.setUserOnlineStatus(true)
+                    }
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_STOP,
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> {
+                    if (currentUser != null) {
+                        viewModel.setUserOnlineStatus(false)
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            if (currentUser != null) {
+                viewModel.setUserOnlineStatus(false)
+            }
+        }
+    }
     val isFirebaseSignedIn by viewModel.isFirebaseSignedIn.collectAsStateWithLifecycle()
     val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
     val registeredCount by viewModel.registeredCount.collectAsStateWithLifecycle()
@@ -404,7 +433,11 @@ fun PaulApp(
                         onSetDisappearingTimer = { secs -> viewModel.setDisappearingTimer(chat.id, secs) },
                         onToggleChatLock = { pin -> viewModel.toggleChatLock(chat.id, pin) },
                         onReportUser = { reason -> viewModel.reportUser(chat.id, reason) },
-                        onToggleArchive = { viewModel.toggleArchiveChat(chat.id) }
+                        onToggleArchive = { viewModel.toggleArchiveChat(chat.id) },
+                        userStatusGroups = userStatusGroups,
+                        onOpenStatusGroup = { group ->
+                            viewModel.openStatusGroup(group)
+                        }
                     )
                 } else {
                     currentScreen = PaulScreen.CHAT_LIST
