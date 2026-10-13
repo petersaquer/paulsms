@@ -33,7 +33,8 @@ exports.purgeExpiredStatuses = onSchedule("every 1 hours", async (event) => {
 
     console.log(`[Status Purge Cron] Encontrados ${expiredSnapshot.size} estados expirados.`);
 
-    const batch = db.batch();
+    let currentBatch = db.batch();
+    let opCount = 0;
 
     for (const doc of expiredSnapshot.docs) {
       const data = doc.data();
@@ -52,15 +53,29 @@ exports.purgeExpiredStatuses = onSchedule("every 1 hours", async (event) => {
 
       // 3. Eliminar subcolección 'views' asociada
       const viewsSnapshot = await db.collection("statuses").doc(statusId).collection("views").get();
-      viewsSnapshot.docs.forEach((viewDoc) => {
-        batch.delete(viewDoc.ref);
-      });
+      for (const viewDoc of viewsSnapshot.docs) {
+        currentBatch.delete(viewDoc.ref);
+        opCount++;
+        if (opCount >= 400) {
+          await currentBatch.commit();
+          currentBatch = db.batch();
+          opCount = 0;
+        }
+      }
 
       // 4. Eliminar el documento de Firestore
-      batch.delete(doc.ref);
+      currentBatch.delete(doc.ref);
+      opCount++;
+      if (opCount >= 400) {
+        await currentBatch.commit();
+        currentBatch = db.batch();
+        opCount = 0;
+      }
     }
 
-    await batch.commit();
+    if (opCount > 0) {
+      await currentBatch.commit();
+    }
     console.log("[Status Purge Cron] Purga completada exitosamente.");
   } catch (error) {
     console.error("[Status Purge Cron] Error en la ejecución de la función:", error);

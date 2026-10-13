@@ -2,9 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Perfiles de usuario: Lectura pública (para búsqueda de contactos), Escritura solo por el propio usuario autenticado
+    // Perfiles de usuario: Lectura autenticada (para búsqueda de contactos), Escritura solo por el propio usuario autenticado
     match /users/{userId} {
-      allow read: if true;
+      allow read: if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == userId && (!('role' in request.resource.data) || request.resource.data.role != 'ADMIN');
       allow update: if request.auth != null && request.auth.uid == userId && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role);
       allow delete: if request.auth != null && request.auth.uid == userId;
@@ -22,10 +22,20 @@ service cloud.firestore {
       allow update: if request.auth != null && request.auth.uid in resource.data.participants;
       allow delete: if request.auth != null && request.auth.uid in resource.data.participants;
 
-      // Mensajes de un chat
+      // Mensajes de un chat: El autor solo puede crear sus propios mensajes, y solo el autor o reacciones autorizadas pueden actualizar
       match /messages/{messageId} {
-        allow read, write: if request.auth != null &&
+        allow read: if request.auth != null &&
           request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow create: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+          request.resource.data.senderId == request.auth.uid;
+        allow update: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+          (resource.data.senderId == request.auth.uid ||
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions', 'hasBeenViewed', 'status', 'pollData', 'isStarred']));
+        allow delete: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+          resource.data.senderId == request.auth.uid;
       }
     }
 
