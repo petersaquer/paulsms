@@ -4,10 +4,17 @@ import com.google.firebase.firestore.IgnoreExtraProperties
 
 @IgnoreExtraProperties
 data class AppUpdateInfo(
-    val versionCode: Int = 1,
     val versionName: String = "1.0.0",
+    val versionCode: Int = 1,
+    val minSupportedVersion: Int = 1,
+    val updateUrl: String = "",
+    val apkDownloadUrl: String = "",
     val releaseNotes: String = "",
-    val downloadUrl: String = "",
+    val changelog: String = "Actualización con nuevas características y mejoras.",
     val isMandatory: Boolean = false,
-    val publishedAt: Long = System.currentTimeMillis()
+    val isForceUpdate: Boolean = false,
+    val publishedBy: String = "Administrador",
+    val publishedAt: Long = 0L,
+    val releaseDate: Long = System.currentTimeMillis(),
+    val releaseDateFormatted: String = ""
 )

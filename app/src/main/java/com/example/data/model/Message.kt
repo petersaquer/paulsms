@@ -31,8 +31,13 @@ data class Message(
     val senderUsername: String = "",
     val senderName: String? = null,
     val senderAvatarGradient: Long? = null,
-    val status: MessageStatus = MessageStatus.READ,
+    val status: MessageStatus = MessageStatus.SENDING,
     val type: MessageType = MessageType.TEXT,
+    val mediaUrl: String? = null,
+    val durationSeconds: Int? = null,
+    val replyToMessageId: String? = null,
+    val replyToText: String? = null,
+    val replyToSender: String? = null,
     val isEncrypted: Boolean = false,
     val isViewOnce: Boolean = false,
     val hasBeenViewed: Boolean = false,
@@ -68,6 +73,9 @@ data class Message(
     val userBadge: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 ) {
+    val poll: PollData? get() = pollData
+    val location: LocationData? get() = locationData
+
     fun isOutgoingFor(currentUserId: String, currentUsername: String): Boolean {
         val cleanCurrentUid = currentUserId.trim().lowercase()
         val cleanCurrentUsername = currentUsername.trim().removePrefix("@").lowercase()

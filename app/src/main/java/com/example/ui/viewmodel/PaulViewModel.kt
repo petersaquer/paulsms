@@ -1403,7 +1403,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             type = MessageType.GIF,
             gifUrl = gifUrl,
             isEncrypted = isEncrypted,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { currentMap ->
@@ -1447,7 +1447,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             type = if (isLive) MessageType.LIVE_LOCATION else MessageType.LOCATION,
             locationData = location,
             isEncrypted = isEncrypted,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { currentMap ->
@@ -1500,7 +1500,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             type = MessageType.PHOTO,
             photoUrl = photoUrl,
             isEncrypted = isEncrypted,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { map ->
@@ -1536,7 +1536,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             videoUrl = videoUrl,
             photoUrl = videoUrl,
             isEncrypted = isEncrypted,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { map ->
@@ -1573,7 +1573,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             fileName = fileName,
             fileSize = fileSize,
             isEncrypted = isEncrypted,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { map ->
@@ -1610,7 +1610,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             contactPhone = contactPhone,
             contactUsername = contactUsername,
             isEncrypted = isEncrypted,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { map ->
@@ -1652,7 +1652,7 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
             senderName = currentName,
             type = MessageType.POLL,
             pollData = pollData,
-            status = MessageStatus.READ
+            status = MessageStatus.SENDING
         )
 
         _messages.update { currentMap ->
