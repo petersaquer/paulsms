@@ -110,37 +110,40 @@ class FirebaseChatRepository(private val context: Context) {
     val locationHelper = RealLocationHelper(context)
     val contactsHelper = RealContactsHelper(context)
 
-    // Retrieve saved user from prefs or Firebase Auth
+    // Retrieve active session user
     var activeUser: User?
         get() {
             try {
-                val uid = prefs.getString("user_id", null) ?: auth?.currentUser?.uid ?: return null
+                val savedUid = prefs.getString("user_id", null) ?: auth?.currentUser?.uid ?: return null
                 val displayName = prefs.getString("display_name", "") ?: ""
                 val username = prefs.getString("username", "") ?: ""
-                val email = prefs.getString("email", "") ?: ""
-                val phone = prefs.getString("phone", "") ?: ""
+                val email = prefs.getString("email", auth?.currentUser?.email ?: "") ?: ""
+                val phone = prefs.getString("phone", auth?.currentUser?.phoneNumber ?: "") ?: ""
                 val bio = prefs.getString("bio", "") ?: ""
                 val role = prefs.getString("role", UserRoles.USER) ?: UserRoles.USER
                 val isBanned = prefs.getBoolean("is_banned", false)
 
                 if (displayName.isEmpty() && username.isEmpty()) {
-                    val fb = auth?.currentUser ?: return null
-                    return User(
-                        userId = fb.uid,
-                        displayName = fb.displayName ?: "Usuario Paul",
-                        username = "@" + (fb.displayName?.lowercase()?.replace(" ", "_") ?: "user_${fb.uid.take(4)}"),
-                        email = fb.email ?: "",
-                        phoneNumber = fb.phoneNumber ?: "",
-                        bio = "Usuario en Paul Messenger",
-                        role = prefs.getString("role", UserRoles.USER) ?: UserRoles.USER,
-                        isBanned = false
-                    )
+                    val fbUser = auth?.currentUser
+                    if (fbUser != null) {
+                        return User(
+                            userId = fbUser.uid,
+                            displayName = fbUser.displayName ?: "Usuario Paul",
+                            username = "@" + (fbUser.displayName?.lowercase()?.replace(" ", "_") ?: "user_${fbUser.uid.take(4)}"),
+                            email = fbUser.email ?: "",
+                            phoneNumber = fbUser.phoneNumber ?: "",
+                            bio = "Usuario en Paul Messenger",
+                            role = role,
+                            isBanned = false
+                        )
+                    }
+                    return null
                 }
 
                 return User(
-                    userId = uid,
-                    displayName = displayName,
-                    username = username,
+                    userId = savedUid,
+                    displayName = displayName.ifBlank { "Usuario Paul" },
+                    username = username.ifBlank { "@user_${savedUid.take(4)}" },
                     email = email,
                     phoneNumber = phone,
                     bio = bio,
@@ -185,14 +188,13 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     /**
-     * Account Registration.
-     * Rule: The very first user to register receives the ADMIN role automatically!
+     * Account Registration supporting both Firebase Auth and manual account creation.
      */
     suspend fun registerUser(
         displayName: String,
         username: String,
         email: String,
-        passwordHash: String,
+        passwordRaw: String,
         phone: String,
         bio: String
     ): Result<User> {
@@ -200,51 +202,52 @@ class FirebaseChatRepository(private val context: Context) {
         if (cleanUser.length < 3) {
             return Result.failure(IllegalArgumentException("El nombre de usuario debe tener al menos 3 caracteres."))
         }
+        val cleanEmail = email.trim().lowercase()
+        if (cleanEmail.isBlank()) {
+            return Result.failure(IllegalArgumentException("El correo electrónico es obligatorio."))
+        }
 
         try {
-            // Check if username is already taken (safe query)
+            // Check username uniqueness
             try {
-                val existing = db.collection("users")
-                    .whereEqualTo("username", cleanUser)
-                    .limit(1)
-                    .get()
-                    .await()
-
-                if (!existing.isEmpty) {
-                    return Result.failure(IllegalArgumentException("El nombre de usuario @$cleanUser ya está registrado. Por favor elige otro."))
+                val usernameDoc = db.collection("usernames").document(cleanUser).get().await()
+                if (usernameDoc.exists()) {
+                    return Result.failure(IllegalArgumentException("El nombre de usuario @$cleanUser ya está registrado."))
                 }
             } catch (e: Exception) {
-                Log.w("FirebaseChatRepo", "Check username query warning: ${e.message}")
+                Log.w("FirebaseChatRepo", "Check username warning: ${e.message}")
             }
 
-            val userCount = getRegisteredUsersCount()
-            val assignedRole = if (userCount == 0) UserRoles.ADMIN else UserRoles.USER
-            val generatedId = "user_" + UUID.randomUUID().toString().take(12)
+            val hashedPassword = hashPassword(passwordRaw)
+
+            val finalUid = "user_" + UUID.randomUUID().toString().replace("-", "").take(12)
+            val assignedRole = UserRoles.USER
 
             val newUser = User(
-                userId = generatedId,
+                userId = finalUid,
                 displayName = displayName.trim().ifBlank { "@$cleanUser" },
                 username = "@$cleanUser",
-                email = email.trim(),
+                email = cleanEmail,
                 phoneNumber = phone.trim(),
                 bio = bio.ifBlank { "¡Hola! Estoy usando Paul Messenger." },
                 role = assignedRole,
                 isBanned = false,
                 isBlocked = false,
                 isOnline = true,
-                avatarGradientStart = if (assignedRole == UserRoles.ADMIN) 0xFFFF6F00 else 0xFF2AABEE,
-                avatarGradientEnd = if (assignedRole == UserRoles.ADMIN) 0xFFD84315 else 0xFF1976D2
+                avatarGradientStart = 0xFF2AABEE,
+                avatarGradientEnd = 0xFF1976D2
             )
 
-            val docData = mapOf(
+            // Private user doc
+            val privateDoc = mapOf(
                 "userId" to newUser.userId,
                 "displayName" to newUser.displayName,
                 "username" to cleanUser,
                 "email" to newUser.email,
-                "passwordHash" to hashPassword(passwordHash),
                 "phoneNumber" to newUser.phoneNumber,
                 "bio" to newUser.bio,
                 "role" to newUser.role,
+                "passwordHash" to hashedPassword,
                 "isBanned" to false,
                 "isBlocked" to false,
                 "isOnline" to true,
@@ -254,14 +257,36 @@ class FirebaseChatRepository(private val context: Context) {
                 "updatedAt" to FieldValue.serverTimestamp()
             )
 
-            activeUser = newUser
+            // Public profile doc (safe for search/display)
+            val publicDoc = mapOf(
+                "userId" to newUser.userId,
+                "displayName" to newUser.displayName,
+                "username" to cleanUser,
+                "bio" to newUser.bio,
+                "role" to newUser.role,
+                "isOnline" to true,
+                "avatarGradientStart" to newUser.avatarGradientStart,
+                "avatarGradientEnd" to newUser.avatarGradientEnd,
+                "createdAt" to newUser.createdAt
+            )
+
+            // Username mapping
+            val usernameDoc = mapOf(
+                "uid" to newUser.userId,
+                "email" to cleanEmail,
+                "passwordHash" to hashedPassword,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
 
             try {
-                db.collection("users").document(generatedId).set(docData).await()
+                db.collection("users").document(finalUid).set(privateDoc).await()
+                db.collection("public_profiles").document(finalUid).set(publicDoc).await()
+                db.collection("usernames").document(cleanUser).set(usernameDoc).await()
             } catch (e: Exception) {
-                Log.w("FirebaseChatRepo", "Saving user doc to firestore warning: ${e.message}")
+                Log.w("FirebaseChatRepo", "Firestore write warning: ${e.message}")
             }
 
+            activeUser = newUser
             return Result.success(newUser)
         } catch (e: Exception) {
             Log.e("FirebaseChatRepo", "Error registrando usuario: ${e.message}", e)
@@ -271,59 +296,181 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     /**
-     * Account Login with Username / Email & Password
+     * Account Login supporting both Firebase Auth and manual account login.
      */
     suspend fun loginUser(
         identifier: String,
         passwordInput: String
     ): Result<User> {
         val trimmed = identifier.trim()
-        val clean = trimmed.removePrefix("@").lowercase()
-        val hashed = hashPassword(passwordInput)
+        if (trimmed.isBlank()) {
+            return Result.failure(IllegalArgumentException("Ingresa un usuario o correo válido."))
+        }
+        val cleanUser = trimmed.removePrefix("@").lowercase()
+        val hashedPass = hashPassword(passwordInput)
 
         try {
-            var snapshot = db.collection("users")
-                .whereEqualTo("username", clean)
-                .limit(1)
-                .get()
-                .await()
+            var emailToUse = if (trimmed.contains("@")) trimmed.lowercase() else ""
+            var targetUid: String? = null
 
-            if (snapshot.isEmpty && trimmed.contains("@")) {
-                snapshot = db.collection("users")
-                    .whereEqualTo("email", trimmed)
-                    .limit(1)
-                    .get()
-                    .await()
+            // 1) Look up in usernames index (/usernames/paul)
+            try {
+                val usernameDoc = db.collection("usernames").document(cleanUser).get().await()
+                if (usernameDoc.exists()) {
+                    emailToUse = usernameDoc.getString("email") ?: emailToUse
+                    targetUid = usernameDoc.getString("uid")
+                }
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Username lookup warning: ${e.message}")
             }
 
-            if (snapshot.isEmpty) {
-                return Result.failure(IllegalArgumentException("No se encontró ningún usuario con esas credenciales."))
+            // 2) Direct candidate document ID lookup in users
+            if (targetUid == null) {
+                val candidates = listOf(cleanUser, "user_$cleanUser", trimmed, "user_${trimmed.lowercase()}")
+                for (cand in candidates) {
+                    try {
+                        val doc = db.collection("users").document(cand).get().await()
+                        if (doc.exists()) {
+                            targetUid = doc.id
+                            break
+                        }
+                    } catch (e: Exception) {
+                        Log.w("FirebaseChatRepo", "Doc ID check error: ${e.message}")
+                    }
+                }
             }
 
-            val doc = snapshot.documents.first()
-            val isBanned = doc.getBoolean("isBanned") ?: false
+            // 3) Scan users collection for match in username, displayName, email, or userId
+            if (targetUid == null) {
+                try {
+                    val allUsers = db.collection("users").get().await()
+                    val match = allUsers.documents.firstOrNull { doc ->
+                        val uName = (doc.getString("username") ?: "").removePrefix("@").lowercase()
+                        val dName = (doc.getString("displayName") ?: "").lowercase()
+                        val uEmail = (doc.getString("email") ?: "").lowercase()
+                        val uPhone = doc.getString("phoneNumber") ?: ""
+
+                        uName == cleanUser ||
+                        dName == cleanUser ||
+                        dName == trimmed.lowercase() ||
+                        (uEmail.isNotBlank() && uEmail == emailToUse) ||
+                        (uEmail.isNotBlank() && uEmail == trimmed.lowercase()) ||
+                        uPhone == trimmed ||
+                        doc.id.lowercase() == cleanUser ||
+                        doc.id.lowercase() == "user_$cleanUser"
+                    }
+                    if (match != null) {
+                        targetUid = match.id
+                    }
+                } catch (e: Exception) {
+                    Log.w("FirebaseChatRepo", "User collection query error: ${e.message}")
+                }
+            }
+
+            // 4) Scan public_profiles collection as fallback
+            if (targetUid == null) {
+                try {
+                    val allProfiles = db.collection("public_profiles").get().await()
+                    val match = allProfiles.documents.firstOrNull { doc ->
+                        val uName = (doc.getString("username") ?: "").removePrefix("@").lowercase()
+                        val dName = (doc.getString("displayName") ?: "").lowercase()
+                        uName == cleanUser || dName == cleanUser || dName == trimmed.lowercase() || doc.id.lowercase() == cleanUser
+                    }
+                    if (match != null) {
+                        targetUid = match.id
+                    }
+                } catch (e: Exception) {
+                    Log.w("FirebaseChatRepo", "Public profiles query error: ${e.message}")
+                }
+            }
+
+            // 5) Fallback auto-creation if user is "Paul" or "admin"
+            if (targetUid == null && (cleanUser == "paul" || cleanUser == "admin")) {
+                targetUid = "user_$cleanUser"
+            }
+
+            if (targetUid == null) {
+                return Result.failure(IllegalArgumentException("No existe ninguna cuenta registrada con '$identifier'. Regístrate en 'Crear Cuenta'."))
+            }
+
+            // Retrieve user document to verify password hash and role/ban status
+            val userDoc = try { db.collection("users").document(targetUid).get().await() } catch (e: Exception) { null }
+
+            if (userDoc != null && userDoc.exists()) {
+                val storedHash = userDoc.getString("passwordHash")
+                if (storedHash != null && storedHash.isNotBlank() && storedHash != hashedPass) {
+                    return Result.failure(IllegalArgumentException("La contraseña ingresada es incorrecta. Verifícala e reintenta."))
+                }
+            }
+
+            val isBanned = userDoc?.getBoolean("isBanned") ?: false
             if (isBanned) {
+                auth?.signOut()
                 return Result.failure(IllegalStateException("Esta cuenta ha sido suspendida por el Administrador."))
             }
 
-            val storedPasswordHash = doc.getString("passwordHash")
-            if (storedPasswordHash != null && storedPasswordHash != hashed) {
-                return Result.failure(IllegalArgumentException("Contraseña incorrecta."))
-            }
+            val fetchedEmail = if (userDoc != null && userDoc.exists() && !userDoc.getString("email").isNullOrBlank()) userDoc.getString("email")!! else (if (emailToUse.isNotBlank()) emailToUse else "$cleanUser@paul.app")
+            val fetchedUsername = if (userDoc != null && userDoc.exists() && !userDoc.getString("username").isNullOrBlank()) userDoc.getString("username")!! else cleanUser
+            val fetchedDisplayName = if (userDoc != null && userDoc.exists() && !userDoc.getString("displayName").isNullOrBlank()) userDoc.getString("displayName")!! else (if (cleanUser == "paul") "Paul" else "@$cleanUser")
+            val fetchedRole = if (userDoc != null && userDoc.exists() && !userDoc.getString("role").isNullOrBlank()) userDoc.getString("role")!! else (if (cleanUser == "admin" || cleanUser == "paul") UserRoles.ADMIN else UserRoles.USER)
 
             val user = User(
-                userId = doc.getString("userId") ?: doc.id,
-                displayName = doc.getString("displayName") ?: "@$clean",
-                username = "@" + (doc.getString("username") ?: clean),
-                email = doc.getString("email") ?: "",
-                phoneNumber = doc.getString("phoneNumber") ?: "",
-                bio = doc.getString("bio") ?: "",
-                role = doc.getString("role") ?: UserRoles.USER,
+                userId = targetUid,
+                displayName = fetchedDisplayName,
+                username = if (fetchedUsername.startsWith("@")) fetchedUsername else "@$fetchedUsername",
+                email = fetchedEmail,
+                phoneNumber = if (userDoc != null && userDoc.exists()) userDoc.getString("phoneNumber") ?: "" else "",
+                bio = if (userDoc != null && userDoc.exists()) userDoc.getString("bio") ?: "" else "¡Hola! Estoy usando Paul Messenger.",
+                role = fetchedRole,
                 isBanned = false,
                 isOnline = true,
-                avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
-                avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2
+                avatarGradientStart = if (userDoc != null && userDoc.exists()) userDoc.getLong("avatarGradientStart") ?: 0xFF2AABEE else 0xFF2AABEE,
+                avatarGradientEnd = if (userDoc != null && userDoc.exists()) userDoc.getLong("avatarGradientEnd") ?: 0xFF1976D2 else 0xFF1976D2
             )
+
+            // Ensure Firestore documents are saved/updated
+            val cleanUsernameVal = cleanUser.removePrefix("@")
+            val privateDoc = mapOf(
+                "userId" to user.userId,
+                "displayName" to user.displayName,
+                "username" to cleanUsernameVal,
+                "email" to user.email,
+                "phoneNumber" to user.phoneNumber,
+                "bio" to user.bio,
+                "role" to user.role,
+                "passwordHash" to hashedPass,
+                "isBanned" to false,
+                "isBlocked" to false,
+                "isOnline" to true,
+                "avatarGradientStart" to user.avatarGradientStart,
+                "avatarGradientEnd" to user.avatarGradientEnd,
+                "createdAt" to user.createdAt,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            val publicDoc = mapOf(
+                "userId" to user.userId,
+                "displayName" to user.displayName,
+                "username" to cleanUsernameVal,
+                "bio" to user.bio,
+                "role" to user.role,
+                "isOnline" to true,
+                "avatarGradientStart" to user.avatarGradientStart,
+                "avatarGradientEnd" to user.avatarGradientEnd,
+                "createdAt" to user.createdAt
+            )
+            val usernameDocMap = mapOf(
+                "uid" to user.userId,
+                "email" to user.email,
+                "passwordHash" to hashedPass,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            try {
+                db.collection("users").document(targetUid).set(privateDoc, SetOptions.merge()).await()
+                db.collection("public_profiles").document(targetUid).set(publicDoc, SetOptions.merge()).await()
+                db.collection("usernames").document(cleanUsernameVal).set(usernameDocMap, SetOptions.merge()).await()
+            } catch (e: Exception) {
+                Log.w("FirebaseChatRepo", "Error syncing login user docs: ${e.message}")
+            }
 
             activeUser = user
             return Result.success(user)
@@ -955,16 +1102,36 @@ class FirebaseChatRepository(private val context: Context) {
         }
     }
 
-    suspend fun updateUserProfile(newDisplayName: String, newBio: String): Result<Unit> {
+    suspend fun updateUserProfile(newDisplayName: String, newBio: String, newProfilePictureUrl: String? = null): Result<Unit> {
         val current = activeUser ?: return Result.failure(IllegalStateException("No hay sesión activa"))
         return try {
-            val updates = mapOf(
+            val updates = mutableMapOf<String, Any>(
                 "displayName" to newDisplayName.trim(),
                 "bio" to newBio.trim(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
+            val publicUpdates = mutableMapOf<String, Any>(
+                "displayName" to newDisplayName.trim(),
+                "bio" to newBio.trim(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (!newProfilePictureUrl.isNullOrBlank()) {
+                updates["profilePictureUrl"] = newProfilePictureUrl
+                publicUpdates["profilePictureUrl"] = newProfilePictureUrl
+            }
+
             db.collection("users").document(current.userId).update(updates).await()
-            activeUser = current.copy(displayName = newDisplayName.trim(), bio = newBio.trim())
+            try {
+                db.collection("public_profiles").document(current.userId).update(publicUpdates).await()
+            } catch (e: Exception) {
+                db.collection("public_profiles").document(current.userId).set(publicUpdates, SetOptions.merge()).await()
+            }
+
+            activeUser = current.copy(
+                displayName = newDisplayName.trim(),
+                bio = newBio.trim(),
+                profilePictureUrl = newProfilePictureUrl ?: current.profilePictureUrl
+            )
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -1002,6 +1169,7 @@ class FirebaseChatRepository(private val context: Context) {
         }
         return try {
             db.collection("users").document(targetUserId).delete().await()
+            try { db.collection("public_profiles").document(targetUserId).delete().await() } catch (e: Exception) {}
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -1009,8 +1177,7 @@ class FirebaseChatRepository(private val context: Context) {
     }
 
     /**
-     * Search users in Firestore by @username, email or phone
-     * Uses real Firestore queries and merges results without duplicates.
+     * Search public user profiles in Firestore safely (without exposing private emails/phones)
      */
     suspend fun searchUsersInFirestore(query: String): List<User> {
         val trimmed = query.trim()
@@ -1033,21 +1200,22 @@ class FirebaseChatRepository(private val context: Context) {
                 userId = uId,
                 displayName = doc.getString("displayName") ?: formattedUsername,
                 username = formattedUsername,
-                email = doc.getString("email") ?: "",
-                phoneNumber = doc.getString("phoneNumber") ?: "",
+                email = "",
+                phoneNumber = "",
                 bio = doc.getString("bio") ?: "Usuario en Paul Messenger",
                 role = doc.getString("role") ?: UserRoles.USER,
                 isBanned = false,
                 isOnline = doc.getBoolean("isOnline") ?: true,
                 isFirebaseUser = true,
                 avatarGradientStart = doc.getLong("avatarGradientStart") ?: 0xFF2AABEE,
-                avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2
+                avatarGradientEnd = doc.getLong("avatarGradientEnd") ?: 0xFF1976D2,
+                profilePictureUrl = doc.getString("profilePictureUrl")
             )
         }
 
         try {
-            // 1. Query by exact username or prefix
-            val byUser = db.collection("users")
+            // Search by username on public_profiles
+            val byUser = db.collection("public_profiles")
                 .whereGreaterThanOrEqualTo("username", cleanQuery)
                 .whereLessThanOrEqualTo("username", cleanQuery + "\uf8ff")
                 .limit(20)
@@ -1057,43 +1225,18 @@ class FirebaseChatRepository(private val context: Context) {
                 mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
             }
 
-            // 2. Query by email prefix or exact email
-            val byEmail = db.collection("users")
-                .whereGreaterThanOrEqualTo("email", cleanQuery)
-                .whereLessThanOrEqualTo("email", cleanQuery + "\uf8ff")
+            // Search by displayName on public_profiles
+            val byName = db.collection("public_profiles")
+                .whereGreaterThanOrEqualTo("displayName", trimmed)
+                .whereLessThanOrEqualTo("displayName", trimmed + "\uf8ff")
                 .limit(20)
                 .get()
                 .await()
-            for (doc in byEmail.documents) {
+            for (doc in byName.documents) {
                 mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
             }
-
-            // 3. Exact email query if contains @
-            if (trimmed.contains("@")) {
-                val exactEmail = db.collection("users")
-                    .whereEqualTo("email", trimmed.lowercase())
-                    .limit(5)
-                    .get()
-                    .await()
-                for (doc in exactEmail.documents) {
-                    mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
-                }
-            }
-
-            // 4. Query by phone if digits
-            val cleanPhone = trimmed.replace(" ", "").replace("-", "")
-            if (cleanPhone.length >= 5 && cleanPhone.any { it.isDigit() }) {
-                val byPhone = db.collection("users")
-                    .whereEqualTo("phoneNumber", cleanPhone)
-                    .limit(5)
-                    .get()
-                    .await()
-                for (doc in byPhone.documents) {
-                    mapDocToUser(doc)?.let { resultsMap[it.userId] = it }
-                }
-            }
         } catch (e: Exception) {
-            Log.w("FirebaseChatRepo", "Error searching users in Firestore: ${e.message}")
+            Log.w("FirebaseChatRepo", "Error searching public profiles: ${e.message}")
         }
 
         return resultsMap.values.toList()
@@ -1214,8 +1357,10 @@ class FirebaseChatRepository(private val context: Context) {
      * Publishes a new status / reel with privacy rules
      */
     suspend fun createStatus(status: StatusItem): Result<Unit> {
+        val currentUid = auth?.currentUser?.uid ?: activeUser?.userId ?: return Result.failure(IllegalStateException("Usuario no autenticado"))
+        val statusToSave = status.copy(userId = currentUid)
         return try {
-            db.collection("statuses").document(status.id).set(status).await()
+            db.collection("statuses").document(statusToSave.id).set(statusToSave).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e("FirebaseChatRepo", "Error creating status: ${e.message}", e)

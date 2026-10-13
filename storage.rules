@@ -9,7 +9,7 @@ service firebase.storage {
 
     function isChatParticipant(chatId) {
       return isAuthenticated() &&
-        request.auth.uid in firestore.get(/databases/(default)/documents/chats/$(chatId)).data.participants;
+        request.auth.uid in firestore.get(/databases/ai-studio-android-paulmess-09187c2e-99b7-4597-b840-ec6413b94818/documents/chats/$(chatId)).data.participants;
     }
 
     // Multimedia de chat (imágenes, videos, documentos, audios)

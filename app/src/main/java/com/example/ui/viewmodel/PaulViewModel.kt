@@ -420,11 +420,21 @@ class PaulViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateUserProfile(newDisplayName: String, newBio: String, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+    fun updateUserProfile(
+        newDisplayName: String,
+        newBio: String,
+        newProfilePictureUrl: String? = null,
+        onComplete: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
         viewModelScope.launch {
-            val res = repository.updateUserProfile(newDisplayName, newBio)
+            val res = repository.updateUserProfile(newDisplayName, newBio, newProfilePictureUrl)
             res.onSuccess {
-                _currentUser.value = _currentUser.value?.copy(displayName = newDisplayName, bio = newBio)
+                _currentUser.value = _currentUser.value?.copy(
+                    displayName = newDisplayName,
+                    bio = newBio,
+                    profilePictureUrl = newProfilePictureUrl ?: _currentUser.value?.profilePictureUrl
+                )
                 onComplete()
             }.onFailure {
                 onError(it.localizedMessage ?: "Error al actualizar perfil")
