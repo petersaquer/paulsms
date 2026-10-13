@@ -1,19 +1,5 @@
 package com.example.data.model
 
-import com.google.firebase.firestore.IgnoreExtraProperties
-
-enum class MessageType {
-    TEXT,
-    VOICE,
-    PHOTO,
-    VIDEO,
-    FILE,
-    LOCATION,
-    POLL,
-    GIF,
-    CONTACT
-}
-
 enum class MessageStatus {
     SENDING,
     SENT,
@@ -21,56 +7,78 @@ enum class MessageStatus {
     READ
 }
 
-@IgnoreExtraProperties
-data class LocationData(
-    val latitude: Double = 0.0,
-    val longitude: Double = 0.0,
-    val address: String = ""
-)
+enum class MessageType {
+    TEXT,
+    VOICE,
+    PHOTO,
+    VIDEO,
+    POLL,
+    STICKER,
+    GIF,
+    LOCATION,
+    LIVE_LOCATION,
+    FILE,
+    CONTACT
+}
 
-@IgnoreExtraProperties
-data class PollOption(
-    val id: String = "",
-    val text: String = "",
-    val votes: Int = 0,
-    val voterIds: List<String> = emptyList()
-)
-
-@IgnoreExtraProperties
-data class PollData(
-    val question: String = "",
-    val options: List<PollOption> = emptyList(),
-    val totalVotes: Int = 0
-)
-
-@IgnoreExtraProperties
 data class Message(
     val id: String = "",
     val chatId: String = "",
-    val senderId: String = "",
-    val senderName: String = "",
     val text: String = "",
     val timestamp: String = "",
-    val createdAt: Long = System.currentTimeMillis(),
     val isOutgoing: Boolean = false,
-    val status: MessageStatus = MessageStatus.SENT,
+    val senderId: String = "",
+    val senderUsername: String = "",
+    val senderName: String? = null,
+    val senderAvatarGradient: Long? = null,
+    val status: MessageStatus = MessageStatus.READ,
     val type: MessageType = MessageType.TEXT,
-    val mediaUrl: String = "",
-    val mediaCaption: String = "",
-    val durationSeconds: Int = 0,
-    val fileName: String = "",
-    val fileSize: String = "",
-    val location: LocationData? = null,
-    val poll: PollData? = null,
-    val reactions: Map<String, Int> = emptyMap(),
-    val userReaction: String = "",
-    val replyToMessageId: String? = null,
-    val replyToText: String? = null,
-    val replyToSender: String? = null,
+    val isEncrypted: Boolean = false,
     val isViewOnce: Boolean = false,
-    val isViewed: Boolean = false,
-    val isStarred: Boolean = false,
+    val hasBeenViewed: Boolean = false,
+    val forwardedFrom: String? = null,
+    val replyTo: Message? = null,
     val isEdited: Boolean = false,
-    val isForwarded: Boolean = false,
-    val originalAuthor: String = ""
-)
+    val editedTimestamp: String? = null,
+    val isDeletedForEveryone: Boolean = false,
+    val isStarred: Boolean = false,
+    val starredBy: List<String> = emptyList(),
+    val deletedFor: List<String> = emptyList(),
+    val expirationTimestamp: Long = 0L,
+    val voiceDurationSeconds: Int? = null,
+    val voiceWaveform: List<Float>? = null,
+    val voiceFilePath: String? = null,
+    val pollData: PollData? = null,
+    val locationData: LocationData? = null,
+    val photoUrl: String? = null,
+    val videoUrl: String? = null,
+    val fileUrl: String? = null,
+    val fileName: String? = null,
+    val fileSize: String? = null,
+    val contactName: String? = null,
+    val contactPhone: String? = null,
+    val contactUsername: String? = null,
+    val gifUrl: String? = null,
+    val stickerEmoji: String? = null,
+    val reactions: Map<String, Int> = emptyMap(),
+    val userReaction: String? = null,
+    val topicId: String? = null,
+    val isPinned: Boolean = false,
+    val isAnonymous: Boolean = false,
+    val userBadge: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    fun isOutgoingFor(currentUserId: String, currentUsername: String): Boolean {
+        val cleanCurrentUid = currentUserId.trim().lowercase()
+        val cleanCurrentUsername = currentUsername.trim().removePrefix("@").lowercase()
+        val cleanSenderId = senderId.trim().lowercase()
+        val cleanSenderUsername = senderUsername.trim().removePrefix("@").lowercase()
+
+        if (cleanSenderId.isNotBlank() && cleanCurrentUid.isNotBlank() && cleanSenderId == cleanCurrentUid) return true
+        if (cleanSenderUsername.isNotBlank() && cleanCurrentUsername.isNotBlank() && cleanSenderUsername == cleanCurrentUsername) return true
+        if (cleanSenderId.isNotBlank() && cleanCurrentUid.isNotBlank() && cleanSenderId != cleanCurrentUid) return false
+        if (cleanSenderUsername.isNotBlank() && cleanCurrentUsername.isNotBlank() && cleanSenderUsername != cleanCurrentUsername) return false
+
+        return isOutgoing
+    }
+}

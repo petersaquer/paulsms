@@ -43,9 +43,10 @@ exports.purgeExpiredStatuses = onSchedule("every 1 hours", async (event) => {
       // 2. Eliminar archivo multimedia asociado en Firebase Storage si existe
       if (data.mediaUrl && data.mediaUrl.startsWith("http")) {
         try {
-          const fileRef = bucket.file(`statuses/${statusId}`);
+          const storagePath = data.storagePath || (data.userId ? `statuses/${data.userId}/${statusId}` : `statuses/${statusId}`);
+          const fileRef = bucket.file(storagePath);
           await fileRef.delete({ ignoreNotFound: true });
-          console.log(`[Status Purge Cron] Archivo en Storage eliminado para estado ${statusId}`);
+          console.log(`[Status Purge Cron] Archivo en Storage eliminado (${storagePath}) para estado ${statusId}`);
         } catch (err) {
           console.warn(`[Status Purge Cron] Error al borrar storage para ${statusId}:`, err.message);
         }

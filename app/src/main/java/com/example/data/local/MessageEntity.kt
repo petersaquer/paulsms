@@ -36,6 +36,8 @@ data class MessageEntity(
     val stickerEmoji: String?,
     val isEdited: Boolean = false,
     val isStarred: Boolean = false,
+    val starredBy: String = "",
+    val deletedFor: String = "",
     val isDeletedForEveryone: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 ) {
@@ -57,6 +59,8 @@ data class MessageEntity(
         forwardedFrom = forwardedFrom,
         isEdited = isEdited,
         isStarred = isStarred,
+        starredBy = if (starredBy.isNotBlank()) starredBy.split(",").filter { it.isNotBlank() } else emptyList(),
+        deletedFor = if (deletedFor.isNotBlank()) deletedFor.split(",").filter { it.isNotBlank() } else emptyList(),
         isDeletedForEveryone = isDeletedForEveryone,
         voiceDurationSeconds = voiceDurationSeconds,
         voiceFilePath = fileUrl,
@@ -103,6 +107,8 @@ data class MessageEntity(
             stickerEmoji = message.stickerEmoji,
             isEdited = message.isEdited,
             isStarred = message.isStarred,
+            starredBy = message.starredBy.joinToString(","),
+            deletedFor = message.deletedFor.joinToString(","),
             isDeletedForEveryone = message.isDeletedForEveryone,
             createdAt = if (message.createdAt > 0L) message.createdAt else System.currentTimeMillis()
         )
