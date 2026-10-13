@@ -1,21 +1,17 @@
 package com.example
 
-import android.app.Activity
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,18 +23,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.model.Chat
-import com.example.data.model.StatusType
-import com.example.ui.components.CreateStatusDialog
-import com.example.data.model.GroupConfig
-import com.example.ui.screens.GroupManagementScreen
+import com.example.data.model.ChatType
 import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.ChatDetailScreen
 import com.example.ui.screens.ChatListScreen
+import com.example.ui.screens.GroupManagementScreen
 import com.example.ui.screens.SearchContactsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StatusViewerScreen
+import com.example.ui.screens.UserProfileScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.PaulViewModel
 
@@ -49,22 +43,28 @@ enum class PaulScreen {
     SETTINGS,
     ADMIN_PANEL,
     SEARCH_CONTACTS,
-    GROUP_MANAGEMENT
+    GROUP_MANAGEMENT,
+    STATUS_VIEWER,
+    PROFILE
 }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
             val viewModel: PaulViewModel = viewModel()
-            val isDarkModeOverride by viewModel.isDarkMode.collectAsStateWithLifecycle()
-            val systemDark = isSystemInDarkTheme()
-            val effectiveDark = isDarkModeOverride ?: systemDark
+            val isDarkModePref by viewModel.isDarkMode.collectAsStateWithLifecycle()
+            val useDarkTheme = isDarkModePref ?: isSystemInDarkTheme()
 
-            MyApplicationTheme(darkTheme = effectiveDark) {
+            MyApplicationTheme(darkTheme = useDarkTheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    PaulApp(viewModel = viewModel, isDarkMode = effectiveDark)
+                    PaulApp(
+                        activity = this,
+                        viewModel = viewModel,
+                        isDarkTheme = useDarkTheme
+                    )
                 }
             }
         }
@@ -73,22 +73,27 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun PaulApp(
+    activity: MainActivity,
     viewModel: PaulViewModel,
-    isDarkMode: Boolean
+    isDarkTheme: Boolean
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
+
+    // Request permissions on start
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* handled */ }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val isFirebaseSignedIn by viewModel.isFirebaseSignedIn.collectAsStateWithLifecycle()
-    val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
-    val registeredCount by viewModel.registeredCount.collectAsStateWithLifecycle()
-    val latestAppUpdate by viewModel.latestAppUpdate.collectAsStateWithLifecycle()
-
-    var dismissedUpdateVersion by remember { mutableStateOf<Int?>(null) }
-
     val chats by viewModel.chats.collectAsStateWithLifecycle()
-    val messagesMap by viewModel.messages.collectAsStateWithLifecycle()
+    val messages by viewModel.messages.collectAsStateWithLifecycle()
     val selectedChat by viewModel.selectedChat.collectAsStateWithLifecycle()
     val selectedFolder by viewModel.selectedFolder.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -96,628 +101,418 @@ fun PaulApp(
     val replyingMessage by viewModel.replyingMessage.collectAsStateWithLifecycle()
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsStateWithLifecycle()
     val recordingSeconds by viewModel.recordingSeconds.collectAsStateWithLifecycle()
+    val userStatusGroups by viewModel.userStatusGroups.collectAsStateWithLifecycle()
+    val selectedStatusGroup by viewModel.selectedStatusGroup.collectAsStateWithLifecycle()
+    val selectedStatusIndex by viewModel.selectedStatusIndex.collectAsStateWithLifecycle()
+    val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
+    val latestAppUpdate by viewModel.latestAppUpdate.collectAsStateWithLifecycle()
+    val registeredCount by viewModel.registeredCount.collectAsStateWithLifecycle()
+    val savedContacts by viewModel.savedContacts.collectAsStateWithLifecycle()
+    val searchContactQuery by viewModel.searchContactQuery.collectAsStateWithLifecycle()
+    val searchContactResults by viewModel.searchContactResults.collectAsStateWithLifecycle()
+    val isSearchingContacts by viewModel.isSearchingContacts.collectAsStateWithLifecycle()
     val activeGroupConfigs by viewModel.activeGroupConfigs.collectAsStateWithLifecycle()
 
     val privacyPhone by viewModel.privacyPhone.collectAsStateWithLifecycle()
     val privacyLastSeen by viewModel.privacyLastSeen.collectAsStateWithLifecycle()
     val privacyForwardProtect by viewModel.privacyForwardProtect.collectAsStateWithLifecycle()
     val privacyPasscodeLock by viewModel.privacyPasscodeLock.collectAsStateWithLifecycle()
-
     val showNotifications by viewModel.showNotifications.collectAsStateWithLifecycle()
     val notificationSound by viewModel.notificationSound.collectAsStateWithLifecycle()
     val notificationVibration by viewModel.notificationVibration.collectAsStateWithLifecycle()
 
-    val userStatusGroups by viewModel.userStatusGroups.collectAsStateWithLifecycle()
-    val selectedStatusGroup by viewModel.selectedStatusGroup.collectAsStateWithLifecycle()
-    val selectedStatusIndex by viewModel.selectedStatusIndex.collectAsStateWithLifecycle()
-
-    val searchContactQuery by viewModel.searchContactQuery.collectAsStateWithLifecycle()
-    val searchContactResults by viewModel.searchContactResults.collectAsStateWithLifecycle()
-    val isSearchingContacts by viewModel.isSearchingContacts.collectAsStateWithLifecycle()
-    val savedContacts by viewModel.savedContacts.collectAsStateWithLifecycle()
-
-    // Notification permission request
-    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (!isGranted) {
-            Toast.makeText(context, "Notificaciones desactivadas", Toast.LENGTH_SHORT).show()
-        }
+    var currentScreen by remember {
+        mutableStateOf(if (currentUser != null) PaulScreen.CHAT_LIST else PaulScreen.AUTH)
     }
 
-    // Audio recording permission request (Permiso de micrófono en tiempo de ejecución)
-    val recordAudioPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            Toast.makeText(context, "Permiso de micrófono concedido", Toast.LENGTH_SHORT).show()
-            viewModel.startVoiceRecording()
-        } else {
-            Toast.makeText(context, "Se necesita permiso de micrófono para grabar notas de voz", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    var createStatusInitialType by remember { mutableStateOf<StatusType?>(null) }
-
-    var currentScreen by remember { mutableStateOf(if (currentUser == null) PaulScreen.AUTH else PaulScreen.CHAT_LIST) }
-
-    LaunchedEffect(Unit) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-        
-        // Handle notification click intent
-        activity?.intent?.getStringExtra("chat_id")?.let { cid ->
-            val chat = chats.find { it.id == cid }
-            if (chat != null) {
-                viewModel.selectChat(chat)
-                currentScreen = PaulScreen.CHAT_DETAIL
-                // Clear the extra
-                activity.intent.removeExtra("chat_id")
-            }
-        }
-    }
-
+    // Keep screen in sync with login status
     LaunchedEffect(currentUser) {
-        if (currentUser == null) {
+        if (currentUser == null && currentScreen != PaulScreen.AUTH) {
             currentScreen = PaulScreen.AUTH
-        } else if (currentScreen == PaulScreen.AUTH) {
+        } else if (currentUser != null && currentScreen == PaulScreen.AUTH) {
             currentScreen = PaulScreen.CHAT_LIST
         }
     }
 
-    AnimatedContent(
-        targetState = currentScreen,
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
-        label = "screen_transition"
-    ) { screen ->
-        when (screen) {
-            PaulScreen.AUTH -> {
-                AuthScreen(
-                    registeredUsersCount = registeredCount,
-                    onLogin = { id, pass, onError ->
-                        viewModel.loginUser(
-                            identifier = id,
-                            pass = pass,
-                            onComplete = {
-                                Toast.makeText(context, "Bienvenido a Paul", Toast.LENGTH_SHORT).show()
-                                currentScreen = PaulScreen.CHAT_LIST
-                            },
-                            onError = onError
-                        )
-                    },
-                    onRegister = { name, userHandle, email, pass, phone, bio, onError ->
-                        viewModel.registerUser(
-                            fullName = name,
-                            username = userHandle,
-                            email = email,
-                            pass = pass,
-                            phone = phone,
-                            bio = bio,
-                            onComplete = {
-                                Toast.makeText(context, "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
-                                currentScreen = PaulScreen.CHAT_LIST
-                            },
-                            onError = onError
-                        )
-                    },
-                    onSignInWithGoogle = {
-                        activity?.let { act ->
-                            viewModel.signInWithGoogle(
-                                activity = act,
-                                onComplete = {
-                                    Toast.makeText(context, "Sesión iniciada con Google", Toast.LENGTH_SHORT).show()
-                                    currentScreen = PaulScreen.CHAT_LIST
-                                },
-                                onError = { err ->
-                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        }
-                    }
-                )
-            }
-
-            PaulScreen.CHAT_LIST -> {
-                ChatListScreen(
-                    currentUser = currentUser,
-                    chats = chats,
-                    selectedFolder = selectedFolder,
-                    searchQuery = searchQuery,
-                    isSearching = isSearching,
-                    isDarkMode = isDarkMode,
-                    isFirebaseSignedIn = isFirebaseSignedIn,
-                    onSelectFolder = { viewModel.setFolder(it) },
-                    onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                    onToggleSearch = { viewModel.toggleSearch(it) },
-                    onToggleDarkMode = { viewModel.toggleDarkMode() },
-                    onSignInGoogle = {
-                        activity?.let { act ->
-                            viewModel.signInWithGoogle(
-                                activity = act,
-                                onComplete = {
-                                    Toast.makeText(context, "Sesión iniciada con Google", Toast.LENGTH_SHORT).show()
-                                },
-                                onError = { err ->
-                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        }
-                    },
-                    onSearchUserInFirebase = { query ->
-                        viewModel.searchUserInFirebase(query)
-                    },
-                    onAddContactAndOpenChat = { title, username, phone, isFirebase ->
-                        viewModel.addContactAndOpenChat(title, username, phone, isFirebase)
-                        currentScreen = PaulScreen.CHAT_DETAIL
-                    },
-                    onChatClick = { chat ->
-                        viewModel.selectChat(chat)
-                        currentScreen = PaulScreen.CHAT_DETAIL
-                    },
-                    onCreateNewChat = { title, type, desc ->
-                        viewModel.createNewChat(title, type, desc)
-                        currentScreen = PaulScreen.CHAT_DETAIL
-                    },
-                    onOpenSavedMessages = {
-                        val savedChat = chats.find { it.type == com.example.data.model.ChatType.SAVED_MESSAGES }
-                        if (savedChat != null) {
-                            viewModel.selectChat(savedChat)
-                            currentScreen = PaulScreen.CHAT_DETAIL
-                        }
-                    },
-                    onOpenAdminPanel = {
-                        currentScreen = PaulScreen.ADMIN_PANEL
-                    },
-                    onOpenContacts = {
-                        currentScreen = PaulScreen.SEARCH_CONTACTS
-                    },
-                    statusGroups = userStatusGroups,
-                    onOpenStatusGroup = { group ->
-                        viewModel.openStatusGroup(group)
-                    },
-                    onCreateTextStatus = {
-                        createStatusInitialType = StatusType.TEXT
-                    },
-                    onCreateMediaStatus = {
-                        createStatusInitialType = StatusType.REEL
-                    },
-                    onDeleteChat = { chatId ->
-                        viewModel.deleteChat(chatId)
-                    },
-                    onTogglePinChat = { chatId ->
-                        viewModel.togglePinChat(chatId)
-                    },
-                    onToggleMuteChat = { chatId ->
-                        viewModel.toggleMuteChat(chatId)
-                    },
-                    onOpenSettings = {
-                        currentScreen = PaulScreen.SETTINGS
-                    }
-                )
-            }
-
-            PaulScreen.CHAT_DETAIL -> {
-                val chat = selectedChat
-                if (chat != null) {
-                    val currentMessages = messagesMap[chat.id] ?: emptyList()
-
-                    ChatDetailScreen(
-                        chat = chat,
-                        messages = currentMessages,
-                        replyingMessage = replyingMessage,
-                        isRecordingVoice = isRecordingVoice,
-                        recordingSeconds = recordingSeconds,
-                        isDarkTheme = isDarkMode,
-                        onBack = {
-                            viewModel.selectChat(null)
+    when (currentScreen) {
+        PaulScreen.AUTH -> {
+            AuthScreen(
+                registeredUsersCount = registeredCount,
+                onLogin = { identifier, pass, onError ->
+                    viewModel.loginUser(
+                        identifier = identifier,
+                        pass = pass,
+                        onComplete = {
                             currentScreen = PaulScreen.CHAT_LIST
                         },
-                        onSendMessage = { text, isViewOnce ->
-                            viewModel.sendMessage(chat.id, text, isViewOnce)
-                        },
-                        onSendVoiceMessage = { duration ->
-                            viewModel.sendVoiceMessage(chat.id, duration)
-                        },
-                        onSendGifMessage = { title, url ->
-                            viewModel.sendGifMessage(chat.id, title, url)
-                        },
-                        onSendLocationMessage = { loc ->
-                            viewModel.sendLocationMessage(chat.id, loc)
-                        },
-                        onSendPoll = { question, options ->
-                            viewModel.sendPoll(chat.id, question, options)
-                        },
-                        onVotePoll = { msgId, optId ->
-                            viewModel.votePoll(msgId, optId)
-                        },
-                        onReaction = { msg, emoji ->
-                            viewModel.addReaction(msg.id, emoji)
-                        },
-                        onReplyMessage = { msg ->
-                            viewModel.setReplyingMessage(msg)
-                        },
-                        onCancelReply = {
-                            viewModel.setReplyingMessage(null)
-                        },
-                        onToggleMute = {
-                            viewModel.toggleMuteChat(chat.id)
-                        },
-                        onTogglePin = {
-                            viewModel.togglePinChat(chat.id)
-                        },
-                        onToggleBlock = {
-                            viewModel.toggleBlockChat(chat.id)
-                        },
-                        onMarkMessageViewed = { msg ->
-                            viewModel.markMessageAsViewed(chat.id, msg.id)
-                        },
-                        onClearChat = {
-                            viewModel.deleteChat(chat.id)
+                        onError = onError
+                    )
+                },
+                onRegister = { name, username, email, pass, phone, bio, onError ->
+                    viewModel.registerUser(
+                        fullName = name,
+                        username = username,
+                        email = email,
+                        pass = pass,
+                        phone = phone,
+                        bio = bio,
+                        onComplete = {
                             currentScreen = PaulScreen.CHAT_LIST
                         },
-                        onStartVoiceRecording = {
-                            val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                                context,
-                                android.Manifest.permission.RECORD_AUDIO
-                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-                            if (hasMicPermission) {
-                                viewModel.startVoiceRecording()
-                            } else {
-                                recordAudioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                            }
-                        },
-                        onCancelVoiceRecording = {
-                            viewModel.cancelVoiceRecording()
-                        },
-                        onStopVoiceRecordingAndSend = {
-                            viewModel.stopVoiceRecordingAndSend(chat.id)
-                        },
-                        onSendPhotoMessage = { url, cap ->
-                            viewModel.sendPhotoMessage(chat.id, url, cap)
-                        },
-                        onSendVideoMessage = { url, cap ->
-                            viewModel.sendVideoMessage(chat.id, url, cap)
-                        },
-                        onSendFileMessage = { url, name, size ->
-                            viewModel.sendFileMessage(chat.id, url, name, size)
-                        },
-                        onSendContactMessage = { name, phone ->
-                            viewModel.sendContactMessage(chat.id, name, phone)
-                        },
-                        onOpenGroupManagement = {
-                            viewModel.observeGroupConfig(chat.id)
-                            currentScreen = PaulScreen.GROUP_MANAGEMENT
-                        },
-                        onEditMessage = { msgId, txt -> viewModel.editMessage(chat.id, msgId, txt) },
-                        onDeleteForMe = { msgId -> viewModel.deleteMessageForMe(chat.id, msgId) },
-                        onDeleteForEveryone = { msgId -> viewModel.deleteMessageForEveryone(chat.id, msgId) },
-                        onToggleStar = { msgId -> viewModel.toggleStarMessage(chat.id, msgId) },
-                        onForwardMessage = { srcMsg, targetId, keepAuthor -> viewModel.forwardMessage(srcMsg, targetId, keepAuthor) },
-                        onSetDisappearingTimer = { secs -> viewModel.setDisappearingTimer(chat.id, secs) },
-                        onToggleChatLock = { pin -> viewModel.toggleChatLock(chat.id, pin) },
-                        onReportUser = { reason -> viewModel.reportUser(chat.id, reason) },
-                        onToggleArchive = { viewModel.toggleArchiveChat(chat.id) }
+                        onError = onError
                     )
-                } else {
-                    currentScreen = PaulScreen.CHAT_LIST
-                }
-            }
-
-            PaulScreen.GROUP_MANAGEMENT -> {
-                val chat = selectedChat
-                val activeConfig = chat?.id?.let { activeGroupConfigs[it] } ?: chat?.groupConfig ?: GroupConfig(groupId = chat?.id ?: "")
-                if (chat != null) {
-                    BackHandler { currentScreen = PaulScreen.CHAT_DETAIL }
-                    GroupManagementScreen(
-                        chat = chat,
-                        currentUserId = currentUser?.userId ?: "",
-                        groupConfig = activeConfig,
-                        onUpdateGroupConfig = { updatedConfig ->
-                            viewModel.updateGroupConfig(chat.id, updatedConfig)
+                },
+                onSignInWithGoogle = {
+                    viewModel.signInWithGoogle(
+                        activity = activity,
+                        onComplete = {
+                            currentScreen = PaulScreen.CHAT_LIST
                         },
-                        onBanUser = { targetId, massDelete ->
-                            viewModel.banUserFromGroup(chat.id, targetId, massDelete)
-                        },
-                        onUnbanUser = { targetId ->
-                            viewModel.unbanUserFromGroup(chat.id, targetId)
-                        },
-                        onBack = { currentScreen = PaulScreen.CHAT_DETAIL }
-                    )
-                } else {
-                    currentScreen = PaulScreen.CHAT_LIST
-                }
-            }
-
-            PaulScreen.SETTINGS -> {
-                BackHandler { currentScreen = PaulScreen.CHAT_LIST }
-                SettingsScreen(
-                    currentUser = currentUser,
-                    isDarkMode = isDarkMode,
-                    isFirebaseSignedIn = isFirebaseSignedIn,
-                    blockedChats = chats.filter { it.isBlocked },
-                    privacyPhone = privacyPhone,
-                    privacyLastSeen = privacyLastSeen,
-                    privacyForwardProtect = privacyForwardProtect,
-                    privacyPasscodeLock = privacyPasscodeLock,
-                    showNotifications = showNotifications,
-                    notificationSound = notificationSound,
-                    notificationVibration = notificationVibration,
-                    onToggleDarkMode = { viewModel.toggleDarkMode() },
-                    onSignInGoogle = {
-                        activity?.let { act ->
-                            viewModel.signInWithGoogle(
-                                activity = act,
-                                onComplete = {
-                                    Toast.makeText(context, "Sesión iniciada con Google", Toast.LENGTH_SHORT).show()
-                                },
-                                onError = { err ->
-                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                                }
-                            )
+                        onError = { err ->
+                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                         }
-                    },
-                    onSignOutGoogle = {
-                        viewModel.signOut {
-                            Toast.makeText(context, "Sesión cerrada", Toast.LENGTH_SHORT).show()
-                            currentScreen = PaulScreen.AUTH
-                        }
-                    },
-                    onUnblockChat = { chatId ->
-                        viewModel.unblockChat(chatId)
-                    },
-                    onUpdatePrivacyPhone = { viewModel.setPrivacyPhone(it) },
-                    onUpdatePrivacyLastSeen = { viewModel.setPrivacyLastSeen(it) },
-                    onToggleForwardProtect = { viewModel.setPrivacyForwardProtect(it) },
-                    onTogglePasscodeLock = { viewModel.setPrivacyPasscodeLock(it) },
-                    onToggleNotifications = { viewModel.setShowNotifications(it) },
-                    onUpdateNotificationSound = { viewModel.setNotificationSound(it) },
-                    onToggleNotificationVibration = { viewModel.setNotificationVibration(it) },
-                    onOpenAdminPanel = { currentScreen = PaulScreen.ADMIN_PANEL },
-                    onUpdateProfile = { name, bio ->
-                        viewModel.updateUserProfile(
-                            newDisplayName = name,
-                            newBio = bio,
-                            onComplete = { Toast.makeText(context, "Perfil actualizado", Toast.LENGTH_SHORT).show() },
-                            onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-                        )
-                    },
-                    onCreateCloudBackup = {
-                        viewModel.createCloudBackup(
-                            onComplete = { Toast.makeText(context, "☁️ Copia de seguridad guardada en la nube", Toast.LENGTH_SHORT).show() },
-                            onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
-                        )
-                    },
-                    onRestoreCloudBackup = {
-                        viewModel.restoreCloudBackup(
-                            onComplete = { count -> Toast.makeText(context, "🔄 Copia restaurada ($count chats recuperados)", Toast.LENGTH_SHORT).show() },
-                            onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
-                        )
-                    },
-                    onBack = { currentScreen = PaulScreen.CHAT_LIST }
-                )
-            }
-
-            PaulScreen.ADMIN_PANEL -> {
-                BackHandler { currentScreen = PaulScreen.CHAT_LIST }
-                val curr = currentUser
-                if (curr != null && (curr.isAdmin || curr.isModerator)) {
-                    AdminPanelScreen(
-                        currentUser = curr,
-                        allUsers = allUsers,
-                        latestAppUpdate = latestAppUpdate,
-                        onUpdateRole = { userId, newRole ->
-                            viewModel.updateUserRole(
-                                userId = userId,
-                                newRole = newRole,
-                                onComplete = {
-                                    Toast.makeText(context, "Rol actualizado con éxito", Toast.LENGTH_SHORT).show()
-                                },
-                                onError = {
-                                    Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        },
-                        onToggleBan = { userId, isBanned ->
-                            viewModel.toggleUserBan(
-                                userId = userId,
-                                isBanned = isBanned,
-                                onComplete = {
-                                    val statusMsg = if (isBanned) "Usuario bloqueado/suspendido" else "Usuario desbloqueado"
-                                    Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
-                                },
-                                onError = {
-                                    Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        },
-                        onDeleteUser = { userId ->
-                            viewModel.deleteUserAccount(
-                                userId = userId,
-                                onComplete = {
-                                    Toast.makeText(context, "Cuenta de usuario eliminada de la base de datos", Toast.LENGTH_SHORT).show()
-                                },
-                                onError = {
-                                    Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        },
-                        onPublishUpdate = { versionName, versionCode, apkUrl, changelog, isMandatory ->
-                            viewModel.publishAppUpdate(
-                                versionName = versionName,
-                                versionCode = versionCode,
-                                apkUrl = apkUrl,
-                                changelog = changelog,
-                                isMandatory = isMandatory,
-                                onComplete = {
-                                    Toast.makeText(context, "¡Actualización publicada exitosamente!", Toast.LENGTH_SHORT).show()
-                                },
-                                onError = {
-                                    Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        },
-                        onBack = { currentScreen = PaulScreen.CHAT_LIST }
                     )
-                } else {
-                    currentScreen = PaulScreen.CHAT_LIST
                 }
-            }
+            )
+        }
 
-            PaulScreen.SEARCH_CONTACTS -> {
-                BackHandler { currentScreen = PaulScreen.CHAT_LIST }
-                SearchContactsScreen(
-                    currentUserId = currentUser?.userId ?: "",
-                    searchQuery = searchContactQuery,
-                    searchResults = searchContactResults,
-                    isSearching = isSearchingContacts,
-                    savedContacts = savedContacts,
-                    deviceContacts = viewModel.getDeviceContacts(),
-                    onQueryChange = { q -> viewModel.setSearchContactQuery(q) },
-                    onExecuteSearch = { q -> viewModel.searchContactsInFirestore(q) },
-                    onSaveContact = { u ->
-                        viewModel.saveContact(
-                            user = u,
-                            onComplete = { Toast.makeText(context, "Añadido a tus contactos", Toast.LENGTH_SHORT).show() },
-                            onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
-                        )
-                    },
-                    onDeleteSavedContact = { id -> viewModel.deleteSavedContact(id) },
-                    onOpenChat = { u ->
-                        viewModel.openChatWithUser(u)
+        PaulScreen.CHAT_LIST -> {
+            ChatListScreen(
+                currentUser = currentUser,
+                chats = chats,
+                selectedFolder = selectedFolder,
+                searchQuery = searchQuery,
+                isSearching = isSearching,
+                isDarkMode = isDarkTheme,
+                isFirebaseSignedIn = isFirebaseSignedIn,
+                statusGroups = userStatusGroups,
+                onSelectFolder = { viewModel.setFolder(it) },
+                onSearchQueryChange = { viewModel.setSearchQuery(it) },
+                onToggleSearch = { viewModel.toggleSearch(it) },
+                onToggleDarkMode = { viewModel.toggleDarkMode() },
+                onSignInGoogle = {
+                    viewModel.signInWithGoogle(
+                        activity = activity,
+                        onComplete = {},
+                        onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                    )
+                },
+                onSearchUserInFirebase = { query -> viewModel.searchUserInFirebase(query) },
+                onAddContactAndOpenChat = { title, username, phone, isFirebase ->
+                    viewModel.addContactAndOpenChat(title, username, phone, isFirebase)
+                    currentScreen = PaulScreen.CHAT_DETAIL
+                },
+                onChatClick = { chat ->
+                    viewModel.selectChat(chat)
+                    currentScreen = PaulScreen.CHAT_DETAIL
+                },
+                onCreateNewChat = { title, type, description ->
+                    viewModel.createNewChat(title, type, description)
+                },
+                onOpenSavedMessages = {
+                    val savedChat = chats.find { it.isSavedMessages }
+                    if (savedChat != null) {
+                        viewModel.selectChat(savedChat)
                         currentScreen = PaulScreen.CHAT_DETAIL
-                    },
-                    onOpenChatWithContact = { title, username, phone, isFirebase ->
-                        viewModel.addContactAndOpenChat(title, username, phone, isFirebase)
+                    } else {
+                        viewModel.createNewChat("Mensajes Guardados", ChatType.DIRECT, "Mis notas y archivos personales")
                         currentScreen = PaulScreen.CHAT_DETAIL
+                    }
+                },
+                onOpenAdminPanel = { currentScreen = PaulScreen.ADMIN_PANEL },
+                onOpenContacts = { currentScreen = PaulScreen.SEARCH_CONTACTS },
+                onOpenStatusGroup = { group ->
+                    viewModel.openStatusGroup(group)
+                    currentScreen = PaulScreen.STATUS_VIEWER
+                },
+                onCreateTextStatus = { /* dialog inside ChatListScreen or component */ },
+                onCreateMediaStatus = { /* media status picker */ },
+                onDeleteChat = { viewModel.deleteChat(it) },
+                onTogglePinChat = { viewModel.togglePinChat(it) },
+                onToggleMuteChat = { viewModel.toggleMuteChat(it) },
+                onOpenSettings = { currentScreen = PaulScreen.SETTINGS },
+                onOpenProfile = { currentScreen = PaulScreen.PROFILE }
+            )
+        }
+
+        PaulScreen.CHAT_DETAIL -> {
+            val activeChat = selectedChat
+            if (activeChat == null) {
+                currentScreen = PaulScreen.CHAT_LIST
+            } else {
+                val chatMessages = messages[activeChat.id] ?: emptyList()
+                val currentConfig = activeGroupConfigs[activeChat.id] ?: com.example.data.model.GroupConfig()
+
+                ChatDetailScreen(
+                    chat = activeChat,
+                    messages = chatMessages,
+                    replyingMessage = replyingMessage,
+                    isRecordingVoice = isRecordingVoice,
+                    recordingSeconds = recordingSeconds,
+                    isDarkTheme = isDarkTheme,
+                    onBack = {
+                        viewModel.selectChat(null)
+                        currentScreen = PaulScreen.CHAT_LIST
                     },
-                    onBack = { currentScreen = PaulScreen.CHAT_LIST }
+                    onSendMessage = { text, isViewOnce ->
+                        viewModel.sendMessage(activeChat.id, text, isViewOnce)
+                    },
+                    onSendVoiceMessage = { duration ->
+                        viewModel.sendVoiceMessage(activeChat.id, duration)
+                    },
+                    onSendGifMessage = { title, url ->
+                        viewModel.sendGifMessage(activeChat.id, title, url)
+                    },
+                    onSendLocationMessage = { loc ->
+                        viewModel.sendLocationMessage(activeChat.id, loc)
+                    },
+                    onSendPoll = { question, options ->
+                        viewModel.sendPoll(activeChat.id, question, options)
+                    },
+                    onVotePoll = { messageId, optionId ->
+                        viewModel.votePoll(messageId, optionId)
+                    },
+                    onReaction = { msg, emoji ->
+                        viewModel.addReaction(msg.id, emoji)
+                    },
+                    onReplyMessage = { msg ->
+                        viewModel.setReplyingMessage(msg)
+                    },
+                    onCancelReply = {
+                        viewModel.setReplyingMessage(null)
+                    },
+                    onToggleMute = {
+                        viewModel.toggleMuteChat(activeChat.id)
+                    },
+                    onTogglePin = {
+                        viewModel.togglePinChat(activeChat.id)
+                    },
+                    onToggleBlock = {
+                        viewModel.toggleBlockChat(activeChat.id)
+                    },
+                    onMarkMessageViewed = { msg ->
+                        viewModel.markMessageAsViewed(activeChat.id, msg.id)
+                    },
+                    onClearChat = {
+                        // clear chat
+                    },
+                    onStartVoiceRecording = {
+                        viewModel.startVoiceRecording()
+                    },
+                    onCancelVoiceRecording = {
+                        viewModel.cancelVoiceRecording()
+                    },
+                    onStopVoiceRecordingAndSend = {
+                        viewModel.stopVoiceRecordingAndSend(activeChat.id)
+                    },
+                    onSendPhotoMessage = { url, caption ->
+                        viewModel.sendPhotoMessage(activeChat.id, url, caption)
+                    },
+                    onSendVideoMessage = { url, caption ->
+                        viewModel.sendVideoMessage(activeChat.id, url, caption)
+                    },
+                    onSendFileMessage = { url, fileName, fileSize ->
+                        viewModel.sendFileMessage(activeChat.id, url, fileName, fileSize)
+                    },
+                    onSendContactMessage = { name, phone ->
+                        viewModel.sendContactMessage(activeChat.id, name, phone)
+                    },
+                    onOpenGroupManagement = {
+                        currentScreen = PaulScreen.GROUP_MANAGEMENT
+                    },
+                    onEditMessage = { msgId, newText ->
+                        viewModel.editMessage(activeChat.id, msgId, newText)
+                    },
+                    onDeleteForMe = { msgId ->
+                        viewModel.deleteMessageForMe(activeChat.id, msgId)
+                    },
+                    onDeleteForEveryone = { msgId ->
+                        viewModel.deleteMessageForEveryone(activeChat.id, msgId)
+                    },
+                    onToggleStar = { msgId ->
+                        viewModel.toggleStarMessage(activeChat.id, msgId)
+                    },
+                    onForwardMessage = { msg, targetChatId, keepAuthor ->
+                        viewModel.forwardMessage(msg, targetChatId, keepAuthor)
+                    },
+                    onSetDisappearingTimer = { seconds ->
+                        viewModel.setDisappearingTimer(activeChat.id, seconds)
+                    },
+                    onToggleChatLock = { pin ->
+                        viewModel.toggleChatLock(activeChat.id, pin)
+                    },
+                    onReportUser = { reason ->
+                        viewModel.reportUser(activeChat.id, reason)
+                    }
                 )
             }
         }
-    }
 
-    // Status / Reel Fullscreen Viewer Modal (WhatsApp style)
-    val activeGroup = selectedStatusGroup
-    if (activeGroup != null) {
-        BackHandler { viewModel.closeStatusViewer() }
-        StatusViewerScreen(
-            group = activeGroup,
-            currentIndex = selectedStatusIndex,
-            onClose = { viewModel.closeStatusViewer() },
-            onNext = { viewModel.nextStatus() },
-            onPrevious = { viewModel.previousStatus() },
-            onRecordView = { id -> viewModel.recordStatusView(id) },
-            onReact = { id, emoji -> viewModel.reactToStatus(id, emoji) },
-            onDeleteStatus = { id ->
-                viewModel.deleteStatus(id) {
-                    Toast.makeText(context, "Estado eliminado", Toast.LENGTH_SHORT).show()
-                    viewModel.closeStatusViewer()
-                }
-            },
-            onReply = { status, text ->
-                viewModel.replyToStatus(status, text)
-                Toast.makeText(context, "Respuesta enviada al chat", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
+        PaulScreen.SETTINGS -> {
+            val blockedList = chats.filter { it.isBlocked }
 
-    // Create Status Dialog Modal (WhatsApp style)
-    val statusTypeToCreate = createStatusInitialType
-    if (statusTypeToCreate != null) {
-        CreateStatusDialog(
-            initialType = statusTypeToCreate,
-            availableContacts = savedContacts,
-            onDismiss = { createStatusInitialType = null },
-            onPublish = { type, text, mediaUrl, bgGradient, fontStyle, caption, privacy, excludedIds, includedIds ->
-                viewModel.createStatus(
-                    type = type,
-                    contentText = text,
-                    mediaUrl = mediaUrl,
-                    backgroundColor = bgGradient,
-                    fontStyle = fontStyle,
-                    caption = caption,
-                    privacy = privacy,
-                    excludedIds = excludedIds,
-                    includedIds = includedIds,
-                    onComplete = {
-                        Toast.makeText(context, "¡Estado publicado!", Toast.LENGTH_SHORT).show()
-                        createStatusInitialType = null
-                    },
-                    onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+            SettingsScreen(
+                currentUser = currentUser,
+                isDarkMode = isDarkTheme,
+                isFirebaseSignedIn = isFirebaseSignedIn,
+                blockedChats = blockedList,
+                privacyPhone = privacyPhone,
+                privacyLastSeen = privacyLastSeen,
+                privacyForwardProtect = privacyForwardProtect,
+                privacyPasscodeLock = privacyPasscodeLock,
+                showNotifications = showNotifications,
+                notificationSound = notificationSound,
+                notificationVibration = notificationVibration,
+                onToggleDarkMode = { viewModel.toggleDarkMode() },
+                onSignInGoogle = {
+                    viewModel.signInWithGoogle(
+                        activity = activity,
+                        onComplete = {},
+                        onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                    )
+                },
+                onSignOutGoogle = {
+                    viewModel.signOut {
+                        currentScreen = PaulScreen.AUTH
                     }
+                },
+                onUnblockChat = { viewModel.unblockChat(it) },
+                onUpdatePrivacyPhone = { viewModel.setPrivacyPhone(it) },
+                onUpdatePrivacyLastSeen = { viewModel.setPrivacyLastSeen(it) },
+                onToggleForwardProtect = { viewModel.setPrivacyForwardProtect(it) },
+                onTogglePasscodeLock = { viewModel.setPrivacyPasscodeLock(it) },
+                onToggleNotifications = { viewModel.setShowNotifications(it) },
+                onUpdateNotificationSound = { viewModel.setNotificationSound(it) },
+                onToggleNotificationVibration = { viewModel.setNotificationVibration(it) },
+                onOpenAdminPanel = { currentScreen = PaulScreen.ADMIN_PANEL },
+                onOpenProfile = { currentScreen = PaulScreen.PROFILE },
+                onUpdateProfile = { name, bio ->
+                    viewModel.updateUserProfile(name, bio)
+                },
+                onCreateCloudBackup = {
+                    viewModel.createCloudBackup(
+                        onComplete = { Toast.makeText(context, "Copia de seguridad creada en la nube", Toast.LENGTH_SHORT).show() },
+                        onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                    )
+                },
+                onRestoreCloudBackup = {
+                    viewModel.restoreCloudBackup(
+                        onComplete = { count -> Toast.makeText(context, "Restaurados $count chats exitosamente", Toast.LENGTH_SHORT).show() },
+                        onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                    )
+                },
+                onBack = { currentScreen = PaulScreen.CHAT_LIST }
+            )
+        }
+
+        PaulScreen.PROFILE -> {
+            UserProfileScreen(
+                currentUser = currentUser,
+                onUpdateProfile = { name, bio, photoUrl ->
+                    viewModel.updateUserProfile(
+                        newDisplayName = name,
+                        newBio = bio,
+                        newProfilePictureUrl = photoUrl,
+                        onComplete = {
+                            Toast.makeText(context, "Perfil actualizado", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                            Toast.makeText(context, "Error: $err", Toast.LENGTH_LONG).show()
+                        }
+                    )
+                },
+                onBack = { currentScreen = PaulScreen.SETTINGS }
+            )
+        }
+
+        PaulScreen.ADMIN_PANEL -> {
+            val user = currentUser
+            if (user == null) {
+                currentScreen = PaulScreen.AUTH
+            } else {
+                AdminPanelScreen(
+                    currentUser = user,
+                    allUsers = allUsers,
+                    latestAppUpdate = latestAppUpdate,
+                    onUpdateRole = { userId, newRole ->
+                        viewModel.updateUserRole(
+                            userId = userId,
+                            newRole = newRole,
+                            onComplete = { Toast.makeText(context, "Rol actualizado a $newRole", Toast.LENGTH_SHORT).show() },
+                            onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                        )
+                    },
+                    onBack = { currentScreen = PaulScreen.SETTINGS }
                 )
             }
-        )
-    }
+        }
 
-    // In-App Update Prompt Dialog for All Users
-    val update = latestAppUpdate
-    val currentVersionCode = try { com.example.BuildConfig.VERSION_CODE } catch (e: Exception) { 1 }
-    
-    if (update != null && update.versionCode > currentVersionCode && dismissedUpdateVersion != update.versionCode) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = {
-                if (!update.isMandatory) dismissedUpdateVersion = update.versionCode
-            },
-            title = {
-                androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    com.example.ui.components.PaulAppLogo(size = 32.dp)
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.width(10.dp))
-                    androidx.compose.material3.Text("🚀 ¡Nueva Versión v${update.versionName}!")
-                }
-            },
-            text = {
-                androidx.compose.foundation.layout.Column {
-                    if (update.releaseDateFormatted.isNotBlank()) {
-                        androidx.compose.material3.Text(
-                            text = "Lanzada el: ${update.releaseDateFormatted}",
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(6.dp))
-                    }
-                    androidx.compose.material3.Text(
-                        text = "Novedades:",
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+        PaulScreen.SEARCH_CONTACTS -> {
+            SearchContactsScreen(
+                searchQuery = searchContactQuery,
+                searchResults = searchContactResults,
+                savedContacts = savedContacts,
+                isSearching = isSearchingContacts,
+                onQueryChange = { query ->
+                    // viewModel search contacts
+                },
+                onSelectUser = { user ->
+                    viewModel.addContactAndOpenChat(
+                        title = user.displayName.ifBlank { user.name },
+                        username = user.username,
+                        phone = user.phoneNumber,
+                        isFirebase = true
                     )
-                    androidx.compose.material3.Text(
-                        text = update.changelog,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                    currentScreen = PaulScreen.CHAT_DETAIL
+                },
+                onSelectSavedContact = { contact ->
+                    viewModel.addContactAndOpenChat(
+                        title = contact.name,
+                        username = contact.username,
+                        phone = contact.phone,
+                        isFirebase = true
                     )
-                }
-            },
-            confirmButton = {
-                androidx.compose.material3.Button(
-                    onClick = {
-                        if (update.apkDownloadUrl.isNotBlank()) {
-                            try {
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.apkDownloadUrl))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Descargando actualización...", Toast.LENGTH_SHORT).show()
-                            }
-                        } else {
-                            Toast.makeText(context, "Descargando actualización del servidor...", Toast.LENGTH_SHORT).show()
-                        }
+                    currentScreen = PaulScreen.CHAT_DETAIL
+                },
+                onBack = { currentScreen = PaulScreen.CHAT_LIST }
+            )
+        }
+
+        PaulScreen.GROUP_MANAGEMENT -> {
+            val activeChat = selectedChat
+            if (activeChat == null) {
+                currentScreen = PaulScreen.CHAT_LIST
+            } else {
+                val currentConfig = activeGroupConfigs[activeChat.id] ?: com.example.data.model.GroupConfig()
+                GroupManagementScreen(
+                    chat = activeChat,
+                    currentUserId = currentUser?.userId ?: "",
+                    groupConfig = currentConfig,
+                    onUpdateGroupConfig = { cfg ->
+                        viewModel.updateGroupConfig(activeChat.id, cfg)
                     },
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.TelegramBlue)
-                ) {
-                    androidx.compose.material3.Text("Actualizar Ahora")
-                }
-            },
-            dismissButton = {
-                if (!update.isMandatory) {
-                    androidx.compose.material3.TextButton(
-                        onClick = { dismissedUpdateVersion = update.versionCode }
-                    ) {
-                        androidx.compose.material3.Text("Más tarde")
-                    }
-                }
+                    onBanUser = { targetId, massDelete ->
+                        viewModel.banUserFromGroup(activeChat.id, targetId, massDelete)
+                    },
+                    onUnbanUser = { targetId ->
+                        viewModel.unbanUserFromGroup(activeChat.id, targetId)
+                    },
+                    onBack = { currentScreen = PaulScreen.CHAT_DETAIL }
+                )
             }
-        )
+        }
+
+        PaulScreen.STATUS_VIEWER -> {
+            val statusGroup = selectedStatusGroup
+            if (statusGroup == null) {
+                currentScreen = PaulScreen.CHAT_LIST
+            } else {
+                StatusViewerScreen(
+                    statusGroup = statusGroup,
+                    initialIndex = selectedStatusIndex,
+                    onClose = { currentScreen = PaulScreen.CHAT_LIST }
+                )
+            }
+        }
     }
 }

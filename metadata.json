@@ -1,6 +1,6 @@
 {
   "name": "Paul",
-  "description": "Aplicación de mensajería rápida, elegante y segura inspirada en Telegram, con chats directos, grupos, canales, notas de voz y asistente bot.",
+  "description": "Paul Messenger - Aplicación de mensajería rápida, segura y moderna con soporte en la nube y chat en tiempo real",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

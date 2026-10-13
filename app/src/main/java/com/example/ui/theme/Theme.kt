@@ -8,39 +8,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
-    primary = TelegramAccent,
+    primary = TelegramBlue,
+    secondary = TelegramAccent,
+    background = TelegramBgDark,
+    surface = TelegramSurfaceDark,
+    surfaceVariant = Color(0xFF242F3D),
     onPrimary = Color.White,
-    primaryContainer = TelegramDarkBlue,
-    onPrimaryContainer = Color.White,
-    secondary = TelegramLightBlue,
-    onSecondary = Color.White,
-    secondaryContainer = DarkSurfaceVariant,
-    onSecondaryContainer = Color.White,
-    background = DarkBg,
-    onBackground = DarkTextPrimary,
-    surface = DarkSurface,
-    onSurface = DarkTextPrimary,
-    surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = DarkTextSecondary,
-    outline = DarkBorder
+    onBackground = Color.White,
+    onSurface = Color.White
 )
 
 private val LightColorScheme = lightColorScheme(
     primary = TelegramBlue,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD7EAF8),
-    onPrimaryContainer = TelegramDarkBlue,
     secondary = TelegramAccent,
-    onSecondary = Color.White,
-    secondaryContainer = LightSurfaceVariant,
-    onSecondaryContainer = LightTextPrimary,
-    background = LightBg,
-    onBackground = LightTextPrimary,
-    surface = LightSurface,
-    onSurface = LightTextPrimary,
-    surfaceVariant = LightSurfaceVariant,
-    onSurfaceVariant = LightTextSecondary,
-    outline = LightBorder
+    background = Color(0xFFF4F4F5),
+    surface = Color.White,
+    surfaceVariant = Color(0xFFEFEFEF),
+    onPrimary = Color.White,
+    onBackground = Color(0xFF1E1E1E),
+    onSurface = Color(0xFF1E1E1E)
 )
 
 @Composable
@@ -49,7 +35,6 @@ fun MyApplicationTheme(
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,

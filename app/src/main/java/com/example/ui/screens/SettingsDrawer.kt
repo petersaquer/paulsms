@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,10 +51,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.data.model.User
 import com.example.ui.components.AboutPaulDialog
 import com.example.ui.components.CallsDialog
@@ -74,6 +78,7 @@ fun SettingsDrawer(
     onOpenSavedMessages: () -> Unit,
     onNewGroup: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenProfile: () -> Unit = {},
     onOpenAdminPanel: () -> Unit = {},
     onCloseDrawer: () -> Unit,
     modifier: Modifier = Modifier
@@ -94,7 +99,6 @@ fun SettingsDrawer(
                 .fillMaxHeight()
                 .verticalScroll(rememberScrollState())
         ) {
-            // Header with user info & dark mode toggle
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -104,6 +108,10 @@ fun SettingsDrawer(
                         )
                     )
                     .statusBarsPadding()
+                    .clickable {
+                        onCloseDrawer()
+                        onOpenProfile()
+                    }
                     .padding(horizontal = 18.dp, vertical = 20.dp)
             ) {
                 Column {
@@ -111,7 +119,6 @@ fun SettingsDrawer(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // User Avatar
                         Box(
                             modifier = Modifier
                                 .size(64.dp)
@@ -119,22 +126,29 @@ fun SettingsDrawer(
                                 .background(Color.White.copy(alpha = 0.25f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = user?.name?.firstOrNull()?.uppercaseChar()?.toString() ?: "P",
-                                color = Color.White,
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            if (!user?.profilePictureUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = user?.profilePictureUrl,
+                                    contentDescription = "Foto de perfil",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Text(
+                                    text = user?.name?.firstOrNull()?.uppercaseChar()?.toString() ?: "P",
+                                    color = Color.White,
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.weight(1f))
-
-                        // Official App Logo Badge (P con pajarito)
                         PaulAppLogo(size = 38.dp, showShadow = true)
-
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        // Theme Mode Toggle
                         IconButton(
                             onClick = onToggleDarkMode,
                             modifier = Modifier.testTag("drawer_theme_toggle")
@@ -164,7 +178,6 @@ fun SettingsDrawer(
                         fontSize = 13.sp
                     )
 
-                    // Cloud status pill
                     Spacer(modifier = Modifier.height(8.dp))
                     Box(
                         modifier = Modifier
@@ -194,7 +207,16 @@ fun SettingsDrawer(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Contacts & User Search
+            DrawerMenuItem(
+                title = "Mi Perfil",
+                icon = Icons.Default.Person,
+                badge = "Editar / Cámara",
+                onClick = {
+                    onCloseDrawer()
+                    onOpenProfile()
+                }
+            )
+
             DrawerMenuItem(
                 title = "Contactos y Usuarios",
                 icon = Icons.Default.Contacts,
@@ -205,7 +227,6 @@ fun SettingsDrawer(
                 }
             )
 
-            // WhatsApp-style Status & Reels
             DrawerMenuItem(
                 title = "Crear Estado / Reel",
                 icon = Icons.Default.Movie,
@@ -216,18 +237,15 @@ fun SettingsDrawer(
                 }
             )
 
-            // Add Contact Action
             DrawerMenuItem(
                 title = "Añadir por Teléfono / @",
                 icon = Icons.Default.PersonAdd,
-                badge = "E2EE / Cloud",
                 onClick = {
                     onCloseDrawer()
                     onAddContact()
                 }
             )
 
-            // Navigation Menu Items
             DrawerMenuItem(
                 title = "Nuevo Grupo",
                 icon = Icons.Default.Group,
@@ -249,11 +267,10 @@ fun SettingsDrawer(
             DrawerMenuItem(
                 title = "Llamadas",
                 icon = Icons.Default.Call,
-                onClick = {
-                    onCloseDrawer()
-                    showCallsDialog = true
-                }
+                onClick = { showCallsDialog = true }
             )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             DrawerMenuItem(
                 title = "Ajustes",
@@ -268,7 +285,7 @@ fun SettingsDrawer(
                 DrawerMenuItem(
                     title = "Panel de Administración",
                     icon = Icons.Default.Security,
-                    badge = if (user.isAdmin) "Admin" else "Mod",
+                    badge = "Admin",
                     onClick = {
                         onCloseDrawer()
                         onOpenAdminPanel()
@@ -276,92 +293,57 @@ fun SettingsDrawer(
                 )
             }
 
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-            )
-
             DrawerMenuItem(
-                title = "Seguridad y Cifrado E2EE",
+                title = "Seguridad E2EE",
                 icon = Icons.Default.Lock,
-                onClick = {
-                    onCloseDrawer()
-                    showSecurityDialog = true
-                }
+                onClick = { showSecurityDialog = true }
             )
 
             DrawerMenuItem(
                 title = "Acerca de Paul",
                 icon = Icons.Default.Info,
-                customLeading = { PaulAppLogo(size = 24.dp) },
-                onClick = {
-                    onCloseDrawer()
-                    showAboutDialog = true
-                }
+                onClick = { showAboutDialog = true }
             )
         }
     }
 
-    if (showAboutDialog) {
-        AboutPaulDialog(onDismiss = { showAboutDialog = false })
-    }
-
-    if (showSecurityDialog) {
-        E2EESecurityDialog(onDismiss = { showSecurityDialog = false })
-    }
-
-    if (showCallsDialog) {
-        CallsDialog(onDismiss = { showCallsDialog = false })
-    }
+    if (showAboutDialog) AboutPaulDialog(onDismiss = { showAboutDialog = false })
+    if (showSecurityDialog) E2EESecurityDialog(onDismiss = { showSecurityDialog = false })
+    if (showCallsDialog) CallsDialog(onDismiss = { showCallsDialog = false })
 }
 
 @Composable
-private fun DrawerMenuItem(
+fun DrawerMenuItem(
     title: String,
     icon: ImageVector,
     badge: String? = null,
-    customLeading: (@Composable () -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 13.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp)
+            .testTag("drawer_item_${title.lowercase().replace(' ', '_')}"),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (customLeading != null) {
-            customLeading()
-        } else {
-            Icon(
-                imageVector = icon,
-                contentDescription = title,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = title,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
         Spacer(modifier = Modifier.width(18.dp))
         Text(
             text = title,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Medium,
-            fontSize = 15.sp,
             modifier = Modifier.weight(1f)
         )
         if (badge != null) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(TelegramBlue.copy(alpha = 0.15f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = badge,
-                    fontSize = 10.sp,
-                    color = TelegramBlue,
-                    fontWeight = FontWeight.Bold
-                )
+            Badge(containerColor = TelegramBlue.copy(alpha = 0.2f)) {
+                Text(text = badge, color = TelegramBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

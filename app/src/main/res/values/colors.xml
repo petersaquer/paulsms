@@ -7,4 +7,6 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="telegram_blue">#2AABEE</color>
+    <color name="telegram_dark_blue">#2275B3</color>
 </resources>
